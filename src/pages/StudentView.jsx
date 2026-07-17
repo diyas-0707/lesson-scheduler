@@ -3,6 +3,7 @@ import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { requestReschedule, hoursUntil } from '../lib/reschedule';
+import DeleteAccountButton from '../components/DeleteAccountButton';
 
 export default function StudentView() {
   const { user, profile, logout } = useAuth();
@@ -78,6 +79,10 @@ export default function StudentView() {
             {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][slot.dayOfWeek]} {slot.startTime}
           </button>
         ))}
+      </section>
+
+      <section>
+        <DeleteAccountButton />
       </section>
     </div>
   );

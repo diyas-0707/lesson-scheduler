@@ -183,6 +183,37 @@ section p { color: var(--ink-soft); font-size: 14px; line-height: 1.5; margin: 0
   margin-top: 8px;
 }
 
+/* --- Danger / delete account --- */
+button.danger {
+  background: #A94438;
+  color: #FFF6F4;
+}
+button.danger:hover { background: #8C372D; }
+
+.danger-link {
+  background: transparent;
+  color: #A94438;
+  border: none;
+  padding: 6px 0;
+  font-size: 13px;
+  text-decoration: underline;
+  font-weight: 500;
+}
+.danger-link:hover { background: transparent; color: #8C372D; }
+
+.danger-confirm {
+  border: 1px solid rgba(169, 68, 56, 0.35);
+  background: rgba(169, 68, 56, 0.06);
+  border-radius: 10px;
+  padding: 14px;
+  margin-top: 8px;
+}
+.danger-confirm p {
+  color: var(--ink);
+  font-size: 13px;
+  margin: 0 0 10px;
+}
+
 /* --- Slot picker chips --- */
 .slot-chip {
   display: inline-flex;
