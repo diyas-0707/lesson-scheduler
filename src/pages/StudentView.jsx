@@ -53,9 +53,9 @@ export default function StudentView() {
 
   return (
     <div className="dashboard">
-      <header>
-        <h1>My Lessons</h1>
-        <button onClick={logout}>Sign out</button>
+      <header className="page-header">
+        <h1 className="display">My Lessons</h1>
+        <button className="ghost" onClick={logout}>Sign out</button>
       </header>
 
       <section>
@@ -74,7 +74,7 @@ export default function StudentView() {
         <h2>Teacher's availability</h2>
         <p>Pick a new time to reschedule your lesson into:</p>
         {openSlots.map((slot) => (
-          <button key={slot.id} onClick={() => handleReschedule(myLesson?.date, slot.startTime)}>
+          <button key={slot.id} className="slot-chip" onClick={() => handleReschedule(myLesson?.date, slot.startTime)}>
             {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][slot.dayOfWeek]} {slot.startTime}
           </button>
         ))}

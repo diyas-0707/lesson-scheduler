@@ -32,14 +32,15 @@ export default function TeacherDashboard() {
 
   return (
     <div className="dashboard">
-      <header>
-        <h1>Your Studio</h1>
-        <button onClick={logout}>Sign out</button>
+      <header className="page-header">
+        <h1 className="display">Your Studio</h1>
+        <button className="ghost" onClick={logout}>Sign out</button>
       </header>
 
       <section>
         <h2>Invite code</h2>
-        <p>Share this with students so they can connect: <strong>{profile.inviteCode}</strong></p>
+        <p>Share this with students so they can connect:</p>
+        <span className="invite-code">{profile.inviteCode}</span>
       </section>
 
       <section>
