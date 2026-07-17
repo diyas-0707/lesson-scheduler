@@ -52,7 +52,7 @@ export default function StudentView() {
   }
 
   return (
-    <div className="dashboard">
+    <div className="app-shell">
       <header className="page-header">
         <h1 className="display">My Lessons</h1>
         <button className="ghost" onClick={logout}>Sign out</button>

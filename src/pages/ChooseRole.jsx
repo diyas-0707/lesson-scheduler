@@ -1,14 +1,31 @@
-import { useState } from 'react';
-import { doc, updateDoc } from 'firebase/firestore';
+import { useEffect, useState } from 'react';
+import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { connectStudentToTeacher, generateInviteCode } from '../lib/connect';
+import {
+  acceptConnectionRequest, connectStudentToTeacher, generateInviteCode,
+  rejectConnectionRequest, requestConnectionByEmail
+} from '../lib/connect';
 
 export default function ChooseRole() {
   const { user, profile, setProfile } = useAuth();
   const [pickedStudent, setPickedStudent] = useState(false);
   const [code, setCode] = useState('');
+  const [teacherEmail, setTeacherEmail] = useState('');
   const [error, setError] = useState('');
+  const [sent, setSent] = useState(false);
+  const [incoming, setIncoming] = useState([]);
+
+  // Requests a teacher has already sent to this email, waiting for confirmation.
+  useEffect(() => {
+    const q = query(
+      collection(db, 'connectionRequests'),
+      where('studentId', '==', user.uid),
+      where('status', '==', 'pending'),
+      where('initiatedBy', '==', 'teacher')
+    );
+    return onSnapshot(q, (snap) => setIncoming(snap.docs.map((d) => ({ id: d.id, ...d.data() }))));
+  }, [user.uid]);
 
   async function becomeTeacher() {
     const inviteCode = generateInviteCode();
@@ -16,7 +33,7 @@ export default function ChooseRole() {
     setProfile({ ...profile, role: 'teacher', inviteCode });
   }
 
-  async function joinAsStudent(e) {
+  async function joinWithCode(e) {
     e.preventDefault();
     setError('');
     try {
@@ -25,6 +42,24 @@ export default function ChooseRole() {
     } catch (err) {
       setError(err.message);
     }
+  }
+
+  async function requestByEmail(e) {
+    e.preventDefault();
+    setError('');
+    try {
+      await requestConnectionByEmail({
+        fromUid: user.uid, fromProfile: profile, fromRole: 'student', toEmail: teacherEmail
+      });
+      setSent(true);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function confirm(request) {
+    await acceptConnectionRequest(request.id, request);
+    setProfile({ ...profile, role: 'student', teacherId: request.teacherId });
   }
 
   return (
@@ -38,25 +73,59 @@ export default function ChooseRole() {
         <line x1="0" y1="17" x2="56" y2="17" />
       </svg>
 
+      {incoming.length > 0 && (
+        <div className="card" style={{ marginTop: 24, textAlign: 'left', width: 280 }}>
+          <h2>Waiting for your confirmation</h2>
+          {incoming.map((r) => (
+            <div key={r.id} className="request-card">
+              <p style={{ margin: 0 }}>{r.teacherName} ({r.teacherEmail}) wants to add you as a student.</p>
+              <div>
+                <button className="primary" onClick={() => confirm(r)}>Confirm</button>
+                <button className="ghost" onClick={() => rejectConnectionRequest(r.id)}>Decline</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {!pickedStudent && (
         <div style={{ display: 'flex', gap: 10, marginTop: 26 }}>
           {/* In practice you'd only show one of these — the teacher account
-              gets created once, ahead of time, then shares the invite code. */}
+              gets created once, ahead of time, then shares the invite code
+              or looks up students by email. */}
           <button className="primary" onClick={becomeTeacher}>I'm the teacher</button>
           <button className="ghost" onClick={() => setPickedStudent(true)}>I'm a student</button>
         </div>
       )}
 
       {pickedStudent && (
-        <form onSubmit={joinAsStudent} style={{ display: 'flex', gap: 8, marginTop: 26 }}>
-          <input
-            autoFocus
-            placeholder="Enter invite code from your teacher"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-          />
-          <button className="primary" type="submit">Connect</button>
-        </form>
+        <div style={{ marginTop: 26, width: 280 }}>
+          <form onSubmit={joinWithCode} style={{ display: 'flex', gap: 8 }}>
+            <input
+              autoFocus
+              placeholder="Invite code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+            />
+            <button className="primary" type="submit">Connect</button>
+          </form>
+
+          <p style={{ margin: '14px 0 6px', fontSize: 13, color: 'var(--ink-soft)' }}>— or —</p>
+
+          {sent ? (
+            <p style={{ fontSize: 14 }}>Request sent — your teacher needs to confirm it on their end.</p>
+          ) : (
+            <form onSubmit={requestByEmail} style={{ display: 'flex', gap: 8 }}>
+              <input
+                type="email"
+                placeholder="Teacher's email"
+                value={teacherEmail}
+                onChange={(e) => setTeacherEmail(e.target.value)}
+              />
+              <button className="ghost" type="submit">Request</button>
+            </form>
+          )}
+        </div>
       )}
       {error && <p className="error">{error}</p>}
     </div>

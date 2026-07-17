@@ -84,9 +84,33 @@ needs approval. Requests outside the window are applied directly to the
 ```
 
 ## Connection flow (mirrors the dance tracker's parent-student linking)
+Two ways to connect, same as the dance app offered parents:
+
+**Invite code (instant, no confirmation):**
 1. Teacher's `inviteCode` is generated once and shown/shared by the teacher.
 2. Student signs in with Google, enters the invite code.
 3. Client looks up the teacher by `inviteCode`, writes `teacherId` onto the
    student's user doc, and creates the mirrored doc under
    `users/{teacherId}/students/{studentId}`.
-4. Teacher then assigns the student's `recurringSlot` from the roster view.
+
+**Email + confirmation (either side can initiate):**
+1. Either the student enters the teacher's email, or the teacher enters a
+   student's email — both require the other person to have signed in at
+   least once already (so their `users/{uid}` doc exists to look up).
+2. This creates a `connectionRequests/{id}` doc with `status: "pending"`.
+3. The receiving side sees it (teacher: on their dashboard; student: on the
+   choose-role screen) and clicks Confirm or Decline.
+4. Confirming runs the same linking logic as the invite-code path.
+
+## `connectionRequests/{id}`
+```
+{
+  studentId, studentName, studentEmail,
+  teacherId, teacherName, teacherEmail,
+  initiatedBy: "student" | "teacher",
+  status: "pending" | "accepted" | "rejected",
+  createdAt: timestamp
+}
+```
+
+Either way, the teacher then assigns the student's `recurringSlot` from the roster view.
