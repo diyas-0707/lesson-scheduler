@@ -6,6 +6,7 @@ import { connectStudentToTeacher, generateInviteCode } from '../lib/connect';
 
 export default function ChooseRole() {
   const { user, profile, setProfile } = useAuth();
+  const [pickedStudent, setPickedStudent] = useState(false);
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
 
@@ -37,20 +38,26 @@ export default function ChooseRole() {
         <line x1="0" y1="17" x2="56" y2="17" />
       </svg>
 
-      <div style={{ marginTop: 26 }}>
-        {/* In practice you'd only show one of these — the teacher account
-            gets created once, ahead of time, then shares the invite code. */}
-        <button className="primary" onClick={becomeTeacher}>I'm the teacher</button>
-      </div>
+      {!pickedStudent && (
+        <div style={{ display: 'flex', gap: 10, marginTop: 26 }}>
+          {/* In practice you'd only show one of these — the teacher account
+              gets created once, ahead of time, then shares the invite code. */}
+          <button className="primary" onClick={becomeTeacher}>I'm the teacher</button>
+          <button className="ghost" onClick={() => setPickedStudent(true)}>I'm a student</button>
+        </div>
+      )}
 
-      <form onSubmit={joinAsStudent} style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-        <input
-          placeholder="Enter invite code"
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-        />
-        <button className="ghost" type="submit">Connect</button>
-      </form>
+      {pickedStudent && (
+        <form onSubmit={joinAsStudent} style={{ display: 'flex', gap: 8, marginTop: 26 }}>
+          <input
+            autoFocus
+            placeholder="Enter invite code from your teacher"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+          <button className="primary" type="submit">Connect</button>
+        </form>
+      )}
       {error && <p className="error">{error}</p>}
     </div>
   );
