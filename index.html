@@ -40,13 +40,14 @@
   button:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
   button.danger { background: #A94438; color: #FFF6F4; }
   button.danger:hover { background: #8C372D; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
   .danger-link { background: transparent; color: #A94438; border: none; padding: 6px 0; font-size: 13px; text-decoration: underline; font-weight: 500; }
   .danger-link:hover { background: transparent; color: #8C372D; }
   .danger-confirm { border: 1px solid rgba(169, 68, 56, 0.35); background: rgba(169, 68, 56, 0.06); border-radius: 10px; padding: 14px; margin-top: 8px; }
   .danger-confirm p { color: var(--ink); font-size: 13px; margin: 0 0 10px; }
-  input { font-family: 'Public Sans', sans-serif; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--rule); background: var(--paper-raised); color: var(--ink); font-size: 14px; }
+  input, select { font-family: 'Public Sans', sans-serif; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--rule); background: var(--paper-raised); color: var(--ink); font-size: 14px; }
   input::placeholder { color: var(--ink-soft); }
-  input:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
+  input:focus-visible, select:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
   section, .card { background: var(--paper-raised); border: 1px solid var(--rule-light); border-radius: 14px; padding: 18px 18px 20px; margin-bottom: 16px; box-shadow: var(--shadow); }
   section h2, .card h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--brass-deep); font-family: 'Public Sans', sans-serif; font-weight: 700; margin: 0 0 12px; }
   section p { color: var(--ink-soft); font-size: 14px; line-height: 1.5; margin: 0 0 10px; }
@@ -60,8 +61,10 @@
   .ok { color: var(--sage); font-size: 13px; margin-top: 8px; }
   .slot-chip { display: inline-flex; margin: 4px 6px 0 0; background: var(--paper); border: 1px solid var(--sage); color: var(--sage); font-family: 'IBM Plex Mono', monospace; font-size: 13px; padding: 7px 12px; }
   .slot-chip:hover { background: var(--sage); color: #fff; }
-  form.inline { display: flex; gap: 8px; }
+  .slot-chip:disabled { border-color: var(--rule); color: var(--ink-soft); background: transparent; }
+  form.inline { display: flex; gap: 8px; flex-wrap: wrap; }
   .divider-text { margin: 14px 0 6px; font-size: 13px; color: var(--ink-soft); }
+  .current-slot { font-family: 'IBM Plex Mono', monospace; color: var(--slate); font-size: 15px; margin: 0 0 6px; }
 </style>
 </head>
 <body>
@@ -75,7 +78,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection,
-  onSnapshot, query, where, serverTimestamp, writeBatch, getDocs
+  onSnapshot, query, where, serverTimestamp, writeBatch, getDocs, arrayUnion, arrayRemove
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 // TODO: replace with this project's own Firebase config
@@ -98,13 +101,7 @@ const googleProvider = new GoogleAuthProvider();
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const el = document.getElementById('app');
 
-let state = {
-  user: null,
-  profile: null,
-  loading: true,
-  // live listeners get cleaned up between screens
-  unsubs: []
-};
+let state = { user: null, profile: null, loading: true, unsubs: [] };
 
 function clearUnsubs() {
   state.unsubs.forEach((u) => u());
@@ -121,30 +118,27 @@ function staffSvg() {
   </svg>`;
 }
 
+function dayOptions(selected) {
+  return DAYS.map((d, i) => `<option value="${i}" ${i === selected ? 'selected' : ''}>${d}</option>`).join('');
+}
+
 // ---------- Auth wiring ----------
 onAuthStateChanged(auth, async (firebaseUser) => {
   clearUnsubs();
   if (!firebaseUser) {
-    state.user = null;
-    state.profile = null;
-    state.loading = false;
+    state.user = null; state.profile = null; state.loading = false;
     render();
     return;
   }
   state.user = firebaseUser;
-
   const ref = doc(db, 'users', firebaseUser.uid);
   const snap = await getDoc(ref);
   if (snap.exists()) {
     state.profile = snap.data();
   } else {
     const bare = {
-      name: firebaseUser.displayName || '',
-      email: firebaseUser.email || '',
-      photoURL: firebaseUser.photoURL || '',
-      role: null,
-      teacherId: null,
-      inviteCode: null
+      name: firebaseUser.displayName || '', email: firebaseUser.email || '',
+      photoURL: firebaseUser.photoURL || '', role: null, teacherId: null, inviteCode: null
     };
     await setDoc(ref, bare);
     state.profile = bare;
@@ -165,13 +159,11 @@ async function connectStudentToTeacher(code) {
   const q = query(collection(db, 'users'), where('inviteCode', '==', code));
   const results = await getDocs(q);
   if (results.empty) throw new Error('No teacher found with that invite code.');
-  const teacherDoc = results.docs[0];
-  const teacherId = teacherDoc.id;
-
+  const teacherId = results.docs[0].id;
   await updateDoc(doc(db, 'users', state.user.uid), { teacherId, role: 'student' });
   await setDoc(doc(db, 'users', teacherId, 'students', state.user.uid), {
     studentId: state.user.uid, name: state.profile.name, email: state.profile.email,
-    recurringSlot: null, connectedAt: new Date()
+    recurringSlot: null, unavailableDates: [], connectedAt: new Date()
   });
   return teacherId;
 }
@@ -200,7 +192,7 @@ async function acceptConnectionRequest(requestId, request) {
   const { studentId, teacherId, studentName, studentEmail } = request;
   await updateDoc(doc(db, 'users', studentId), { teacherId, role: 'student' });
   await setDoc(doc(db, 'users', teacherId, 'students', studentId), {
-    studentId, name: studentName, email: studentEmail, recurringSlot: null, connectedAt: new Date()
+    studentId, name: studentName, email: studentEmail, recurringSlot: null, unavailableDates: [], connectedAt: new Date()
   });
   await updateDoc(doc(db, 'connectionRequests', requestId), { status: 'accepted' });
 }
@@ -232,7 +224,6 @@ async function requestReschedule({ teacherId, studentId, studentName, lessonId, 
     });
     return { autoApplied: false };
   }
-
   await updateDoc(lessonRef, { date: toDate, startTime: toStartTime, originalDate: fromDate, status: 'confirmed' });
   return { autoApplied: true };
 }
@@ -242,7 +233,6 @@ async function respondToRequest(teacherId, requestId, approve) {
   const snap = await getDoc(requestRef);
   const req = snap.data();
   const lessonRef = doc(db, 'users', teacherId, 'lessons', req.lessonId);
-
   if (approve) {
     await updateDoc(lessonRef, { date: req.toDate, startTime: req.toStartTime, originalDate: req.fromDate, status: 'confirmed' });
   } else {
@@ -255,7 +245,6 @@ async function respondToRequest(teacherId, requestId, approve) {
 async function deleteAccount() {
   const uid = state.user.uid;
   const batch = writeBatch(db);
-
   if (state.profile.role === 'teacher') {
     const subcollections = ['students', 'availability', 'availabilityOverrides', 'lessons', 'rescheduleRequests'];
     for (const sub of subcollections) {
@@ -268,15 +257,12 @@ async function deleteAccount() {
     const lessonsSnap = await getDocs(query(collection(db, 'users', state.profile.teacherId, 'lessons'), where('studentId', '==', uid)));
     lessonsSnap.forEach((d) => batch.delete(d.ref));
   }
-
   const asStudent = await getDocs(query(collection(db, 'connectionRequests'), where('studentId', '==', uid)));
   asStudent.forEach((d) => batch.delete(d.ref));
   const asTeacher = await getDocs(query(collection(db, 'connectionRequests'), where('teacherId', '==', uid)));
   asTeacher.forEach((d) => batch.delete(d.ref));
-
   batch.delete(doc(db, 'users', uid));
   await batch.commit();
-
   try {
     await deleteUser(auth.currentUser);
   } catch (err) {
@@ -289,12 +275,11 @@ async function deleteAccount() {
   }
 }
 
-function deleteAccountBlock(extraWarning) {
-  return `
-    <section id="delete-account-section">
-      <button class="danger-link" onclick="window.showDeleteConfirm()">Delete my account</button>
-      <div id="delete-confirm-box"></div>
-    </section>`;
+function deleteAccountBlock() {
+  return `<section id="delete-account-section">
+    <button class="danger-link" onclick="window.showDeleteConfirm()">Delete my account</button>
+    <div id="delete-confirm-box"></div>
+  </section>`;
 }
 
 window.showDeleteConfirm = function () {
@@ -310,14 +295,12 @@ window.showDeleteConfirm = function () {
 };
 
 window.confirmDeleteAccount = async function (btn) {
-  btn.disabled = true;
-  btn.textContent = 'Deleting…';
+  btn.disabled = true; btn.textContent = 'Deleting…';
   try {
     await deleteAccount();
   } catch (err) {
     document.getElementById('delete-error').innerHTML = `<p class="error">${err.message}</p>`;
-    btn.disabled = false;
-    btn.textContent = 'Yes, delete it';
+    btn.disabled = false; btn.textContent = 'Yes, delete it';
   }
 };
 
@@ -462,6 +445,7 @@ function renderTeacherDashboard() {
       </section>
 
       <div id="connection-requests-section"></div>
+      <div id="teacher-availability-section"></div>
 
       <section>
         <h2>Reschedule cutoff</h2>
@@ -483,10 +467,15 @@ function renderTeacherDashboard() {
     box.innerHTML = `
       <section>
         <h2>Students (${students.length})</h2>
-        ${students.map((s) => `
-          <div class="student-row">
-            <span>${s.name}</span>
-            <span>${s.recurringSlot ? `${DAYS[s.recurringSlot.dayOfWeek]} ${s.recurringSlot.startTime}` : 'No slot assigned yet'}</span>
+        ${students.length === 0 ? '<p>No students connected yet.</p>' : students.map((s) => `
+          <div class="student-row" style="flex-direction:column; align-items:flex-start; gap:4px;">
+            <div style="display:flex; justify-content:space-between; width:100%;">
+              <span>${s.name}</span>
+              <span>${s.recurringSlot ? `${DAYS[s.recurringSlot.dayOfWeek]} ${s.recurringSlot.startTime}` : 'No slot chosen yet'}</span>
+            </div>
+            ${s.unavailableDates && s.unavailableDates.length > 0
+              ? `<span style="font-size:12px; color:var(--ink-soft);">Out: ${s.unavailableDates.slice().sort().join(', ')}</span>`
+              : ''}
           </div>`).join('')}
       </section>`;
   });
@@ -509,9 +498,9 @@ function renderTeacherDashboard() {
       </section>`;
   });
 
-  const q = query(collection(db, 'connectionRequests'),
+  const cq = query(collection(db, 'connectionRequests'),
     where('teacherId', '==', state.user.uid), where('status', '==', 'pending'), where('initiatedBy', '==', 'student'));
-  const unsubConnections = onSnapshot(q, (snap) => {
+  const unsubConnections = onSnapshot(cq, (snap) => {
     const requests = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     const box = document.getElementById('connection-requests-section');
     if (!box) return;
@@ -529,7 +518,29 @@ function renderTeacherDashboard() {
       </section>`;
   });
 
-  state.unsubs.push(unsubStudents, unsubRequests, unsubConnections);
+  const unsubAvailability = onSnapshot(collection(db, 'users', state.user.uid, 'availability'), (snap) => {
+    const blocks = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.startTime.localeCompare(b.startTime));
+    const box = document.getElementById('teacher-availability-section');
+    if (!box) return;
+    box.innerHTML = `
+      <section>
+        <h2>Weekly availability</h2>
+        <p>The open blocks students can choose their lesson time from.</p>
+        <form class="inline" onsubmit="window.addAvailabilityBlock(event)">
+          <select id="avail-day">${dayOptions(1)}</select>
+          <input id="avail-start" type="time" required />
+          <input id="avail-end" type="time" required />
+          <button class="ghost" type="submit">Add</button>
+        </form>
+        ${blocks.length === 0 ? '' : blocks.map((b) => `
+          <div class="student-row">
+            <span>${DAYS[b.dayOfWeek]} ${b.startTime}–${b.endTime}</span>
+            <button class="danger-link" onclick="window.deleteAvailabilityBlock('${b.id}')">Remove</button>
+          </div>`).join('')}
+      </section>`;
+  });
+
+  state.unsubs.push(unsubStudents, unsubRequests, unsubConnections, unsubAvailability);
 }
 
 window.saveCutoff = async function (value) {
@@ -557,6 +568,19 @@ window.respondReschedule = async function (requestId, approve) {
   await respondToRequest(state.user.uid, requestId, approve);
 };
 
+window.addAvailabilityBlock = async function (e) {
+  e.preventDefault();
+  const dayOfWeek = Number(document.getElementById('avail-day').value);
+  const startTime = document.getElementById('avail-start').value;
+  const endTime = document.getElementById('avail-end').value;
+  if (!startTime || !endTime) return;
+  await addDoc(collection(db, 'users', state.user.uid, 'availability'), { dayOfWeek, startTime, endTime, recurring: true });
+};
+
+window.deleteAvailabilityBlock = async function (blockId) {
+  await deleteDoc(doc(db, 'users', state.user.uid, 'availability', blockId));
+};
+
 // ---------- Student view ----------
 function renderStudentView() {
   el.innerHTML = `
@@ -566,7 +590,9 @@ function renderStudentView() {
         <button class="ghost" onclick="window.logout()">Sign out</button>
       </header>
       <div id="my-lesson-section"><section><h2>Upcoming lesson</h2><p>Loading…</p></section></div>
-      <div id="availability-section"></div>
+      <div id="lesson-time-section"></div>
+      <div id="unavailable-section"></div>
+      <div id="reschedule-picker-section"></div>
       <div id="delete-account-mount"></div>
     </div>`;
 
@@ -578,16 +604,111 @@ function renderStudentView() {
     return;
   }
 
+  const teacherId = state.profile.teacherId;
+  const uid = state.user.uid;
   let myLesson = null;
+  let myStudentDoc = { recurringSlot: null, unavailableDates: [] };
+  let allTeacherStudents = [];
+  let availabilityBlocks = [];
+  let showSlotPicker = false;
 
-  const lessonsQ = query(collection(db, 'users', state.profile.teacherId, 'lessons'), where('studentId', '==', state.user.uid));
+  function isSlotTaken(dayOfWeek, startTime) {
+    return allTeacherStudents.some((s) =>
+      s.id !== uid && s.recurringSlot &&
+      s.recurringSlot.dayOfWeek === dayOfWeek && s.recurringSlot.startTime === startTime
+    );
+  }
+
+  function renderLessonTimeSection() {
+    const box = document.getElementById('lesson-time-section');
+    if (!box) return;
+
+    if (myStudentDoc.recurringSlot && !showSlotPicker) {
+      box.innerHTML = `
+        <section>
+          <h2>Your weekly lesson time</h2>
+          <p class="current-slot">${DAYS[myStudentDoc.recurringSlot.dayOfWeek]} at ${myStudentDoc.recurringSlot.startTime}</p>
+          <button class="ghost" onclick="window.toggleSlotPicker()">Change time</button>
+        </section>`;
+      return;
+    }
+
+    const openBlocks = availabilityBlocks.filter((b) => !isSlotTaken(b.dayOfWeek, b.startTime));
+    box.innerHTML = `
+      <section>
+        <h2>Choose your lesson time</h2>
+        <p>Pick one open slot from your teacher's weekly availability.</p>
+        ${openBlocks.length === 0
+          ? '<p>No open slots right now — check back, or ask your teacher.</p>'
+          : openBlocks.map((b) => `
+            <button class="slot-chip" onclick="window.chooseLessonSlot(${b.dayOfWeek}, '${b.startTime}')">
+              ${DAYS[b.dayOfWeek]} ${b.startTime}
+            </button>`).join('')}
+        ${myStudentDoc.recurringSlot ? `<div style="margin-top:10px;"><button class="ghost" onclick="window.toggleSlotPicker()">Cancel</button></div>` : ''}
+      </section>`;
+  }
+
+  function renderUnavailableSection() {
+    const box = document.getElementById('unavailable-section');
+    if (!box) return;
+    const dates = (myStudentDoc.unavailableDates || []).slice().sort();
+    box.innerHTML = `
+      <section>
+        <h2>Days you're not available</h2>
+        <p>Let your teacher know ahead of time which days you'll miss.</p>
+        <form class="inline" onsubmit="window.addUnavailableDate(event)">
+          <input id="unavailable-date-input" type="date" required />
+          <button class="ghost" type="submit">Add</button>
+        </form>
+        ${dates.length === 0 ? '' : dates.map((d) => `
+          <div class="student-row">
+            <span>${d}</span>
+            <button class="danger-link" onclick="window.removeUnavailableDate('${d}')">Remove</button>
+          </div>`).join('')}
+      </section>`;
+  }
+
+  window.toggleSlotPicker = function () {
+    showSlotPicker = !showSlotPicker;
+    renderLessonTimeSection();
+  };
+
+  window.chooseLessonSlot = async function (dayOfWeek, startTime) {
+    await updateDoc(doc(db, 'users', teacherId, 'students', uid), {
+      recurringSlot: { dayOfWeek, startTime, durationMinutes: 30 }
+    });
+    showSlotPicker = false;
+  };
+
+  window.addUnavailableDate = async function (e) {
+    e.preventDefault();
+    const val = document.getElementById('unavailable-date-input').value;
+    if (!val) return;
+    await updateDoc(doc(db, 'users', teacherId, 'students', uid), { unavailableDates: arrayUnion(val) });
+  };
+
+  window.removeUnavailableDate = async function (dateStr) {
+    await updateDoc(doc(db, 'users', teacherId, 'students', uid), { unavailableDates: arrayRemove(dateStr) });
+  };
+
+  const unsubMyDoc = onSnapshot(doc(db, 'users', teacherId, 'students', uid), (snap) => {
+    myStudentDoc = snap.exists() ? { recurringSlot: null, unavailableDates: [], ...snap.data() } : myStudentDoc;
+    renderLessonTimeSection();
+    renderUnavailableSection();
+  });
+
+  const unsubAllStudents = onSnapshot(collection(db, 'users', teacherId, 'students'), (snap) => {
+    allTeacherStudents = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderLessonTimeSection();
+  });
+
+  const lessonsQ = query(collection(db, 'users', teacherId, 'lessons'), where('studentId', '==', uid));
   const unsubLesson = onSnapshot(lessonsQ, (snap) => {
     const upcoming = snap.docs
       .map((d) => ({ id: d.id, ...d.data() }))
       .filter((l) => l.status !== 'cancelled')
       .sort((a, b) => new Date(a.date) - new Date(b.date))[0];
     myLesson = upcoming || null;
-
     const box = document.getElementById('my-lesson-section');
     if (!box) return;
     box.innerHTML = `
@@ -599,18 +720,19 @@ function renderStudentView() {
       </section>`;
   });
 
-  // TODO: derive real open slots from users/{teacherId}/availability
-  // minus already-booked users/{teacherId}/lessons for that week.
-  const unsubAvail = onSnapshot(collection(db, 'users', state.profile.teacherId, 'availability'), (snap) => {
-    const slots = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    const box = document.getElementById('availability-section');
+  const unsubAvail = onSnapshot(collection(db, 'users', teacherId, 'availability'), (snap) => {
+    availabilityBlocks = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.startTime.localeCompare(b.startTime));
+    renderLessonTimeSection();
+
+    const box = document.getElementById('reschedule-picker-section');
     if (!box) return;
+    if (!myLesson) { box.innerHTML = ''; return; }
     box.innerHTML = `
       <section>
-        <h2>Teacher's availability</h2>
-        <p>Pick a new time to reschedule your lesson into:</p>
-        ${slots.map((slot) => `
-          <button class="slot-chip" onclick="window.handleReschedule('${slot.startTime}', ${slot.dayOfWeek})">
+        <h2>Reschedule this lesson</h2>
+        <p>Pick a new time to move your upcoming lesson into:</p>
+        ${availabilityBlocks.map((slot) => `
+          <button class="slot-chip" onclick="window.handleReschedule('${slot.startTime}')">
             ${DAYS[slot.dayOfWeek]} ${slot.startTime}
           </button>`).join('')}
       </section>`;
@@ -619,14 +741,14 @@ function renderStudentView() {
   window.handleReschedule = async function (toStartTime) {
     if (!myLesson) return;
     const result = await requestReschedule({
-      teacherId: state.profile.teacherId, studentId: state.user.uid, studentName: state.profile.name,
+      teacherId, studentId: uid, studentName: state.profile.name,
       lessonId: myLesson.id, fromDate: myLesson.date, fromStartTime: myLesson.startTime,
       toDate: myLesson.date, toStartTime
     });
     alert(result.autoApplied ? 'Lesson moved!' : "Sent to your teacher for approval — you're close to the cutoff window.");
   };
 
-  state.unsubs.push(unsubLesson, unsubAvail);
+  state.unsubs.push(unsubMyDoc, unsubAllStudents, unsubLesson, unsubAvail);
 }
 
 render();
