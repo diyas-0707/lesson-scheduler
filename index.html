@@ -169,32 +169,52 @@ async function connectStudentToTeacher(code) {
 }
 
 async function requestConnectionByEmail(fromRole, toEmail) {
+  const email = toEmail.trim().toLowerCase();
+
+  if (fromRole === 'teacher') {
+    // Student may not have an account yet — no lookup needed. They'll see
+    // this waiting for them the moment they sign in for the first time.
+    if (email === state.profile.email.toLowerCase()) throw new Error("That's your own email.");
+    await addDoc(collection(db, 'connectionRequests'), {
+      teacherId: state.user.uid, teacherName: state.profile.name, teacherEmail: state.profile.email,
+      studentId: null, studentName: null, studentEmail: email,
+      initiatedBy: 'teacher', status: 'pending', createdAt: serverTimestamp()
+    });
+    return;
+  }
+
+  // Student inviting a teacher: teachers always have an account already
+  // (they have to sign in and pick "I'm the teacher" before sharing an
+  // invite code or email), so this lookup is safe to require.
   const q = query(collection(db, 'users'), where('email', '==', toEmail.trim()));
   const results = await getDocs(q);
-  if (results.empty) throw new Error("No account found with that email — they'll need to sign in once first.");
+  if (results.empty) throw new Error("No teacher account found with that email.");
   const toSnap = results.docs[0];
   const toUid = toSnap.id;
   const toData = toSnap.data();
   if (toUid === state.user.uid) throw new Error("That's your own email.");
 
-  const payload = fromRole === 'student'
-    ? { studentId: state.user.uid, studentName: state.profile.name, studentEmail: state.profile.email,
-        teacherId: toUid, teacherName: toData.name, teacherEmail: toData.email,
-        initiatedBy: 'student', status: 'pending', createdAt: serverTimestamp() }
-    : { teacherId: state.user.uid, teacherName: state.profile.name, teacherEmail: state.profile.email,
-        studentId: toUid, studentName: toData.name, studentEmail: toData.email,
-        initiatedBy: 'teacher', status: 'pending', createdAt: serverTimestamp() };
-
-  await addDoc(collection(db, 'connectionRequests'), payload);
+  await addDoc(collection(db, 'connectionRequests'), {
+    studentId: state.user.uid, studentName: state.profile.name, studentEmail: state.profile.email,
+    teacherId: toUid, teacherName: toData.name, teacherEmail: toData.email,
+    initiatedBy: 'student', status: 'pending', createdAt: serverTimestamp()
+  });
 }
 
 async function acceptConnectionRequest(requestId, request) {
-  const { studentId, teacherId, studentName, studentEmail } = request;
+  // studentId may be null if the teacher invited by email before the
+  // student had ever signed in — fill it in now, from whoever is
+  // confirming this (must be the signed-in student themselves).
+  const studentId = request.studentId || state.user.uid;
+  const studentName = request.studentName || state.profile.name;
+  const studentEmail = request.studentEmail || state.profile.email;
+  const teacherId = request.teacherId;
+
   await updateDoc(doc(db, 'users', studentId), { teacherId, role: 'student' });
   await setDoc(doc(db, 'users', teacherId, 'students', studentId), {
     studentId, name: studentName, email: studentEmail, recurringSlot: null, unavailableDates: [], connectedAt: new Date()
   });
-  await updateDoc(doc(db, 'connectionRequests', requestId), { status: 'accepted' });
+  await updateDoc(doc(db, 'connectionRequests', requestId), { status: 'accepted', studentId });
 }
 
 async function rejectConnectionRequest(requestId) {
@@ -338,10 +358,14 @@ function renderChooseRole() {
       </div>
       <div id="student-connect" style="display:none; margin-top:26px; width:280px;"></div>
       <div id="choose-role-error"></div>
+      <button class="ghost" style="margin-top:24px;" onclick="window.logout()">Sign out</button>
     </div>`;
 
+  // Matched by email, not uid — a teacher-initiated request may have been
+  // created before this account existed, so studentId won't be set yet.
   const q = query(collection(db, 'connectionRequests'),
-    where('studentId', '==', state.user.uid), where('status', '==', 'pending'), where('initiatedBy', '==', 'teacher'));
+    where('studentEmail', '==', (state.user.email || '').toLowerCase()),
+    where('status', '==', 'pending'), where('initiatedBy', '==', 'teacher'));
   const unsub = onSnapshot(q, (snap) => {
     const requests = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     const box = document.getElementById('incoming-requests');
@@ -436,7 +460,7 @@ function renderTeacherDashboard() {
 
       <section>
         <h2>Add a student by email</h2>
-        <p>They'll need to have signed in once already, and will confirm the request on their end.</p>
+        <p>They don't need an account yet — this will be waiting for them to confirm the moment they first sign in.</p>
         <form class="inline" onsubmit="window.inviteStudentByEmail(event)">
           <input id="invite-student-email" type="email" placeholder="Student's email" />
           <button class="ghost" type="submit">Send</button>
