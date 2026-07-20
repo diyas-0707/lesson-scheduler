@@ -65,6 +65,20 @@
   form.inline { display: flex; gap: 8px; flex-wrap: wrap; }
   .divider-text { margin: 14px 0 6px; font-size: 13px; color: var(--ink-soft); }
   .current-slot { font-family: 'IBM Plex Mono', monospace; color: var(--slate); font-size: 15px; margin: 0 0 6px; }
+
+  .day-pills { display: flex; gap: 8px; margin: 4px 0 14px; }
+  .day-pill {
+    width: 34px; height: 34px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 500;
+    background: var(--paper); color: var(--ink-soft);
+    border: 1px solid var(--rule); padding: 0; cursor: pointer;
+  }
+  .day-pill:hover { background: var(--rule-light); color: var(--ink); }
+  .day-pill.selected { background: var(--brass-deep); color: #FFF9EF; border-color: var(--brass-deep); }
+  .day-pill.selected:hover { background: var(--brass); }
+  .day-pill.disabled { opacity: 0.3; cursor: not-allowed; }
+  .day-pill.disabled:hover { background: var(--paper); color: var(--ink-soft); }
 </style>
 </head>
 <body>
@@ -120,6 +134,38 @@ function staffSvg() {
 
 function dayOptions(selected) {
   return DAYS.map((d, i) => `<option value="${i}" ${i === selected ? 'selected' : ''}>${d}</option>`).join('');
+}
+
+const DAY_LETTERS = ['S','M','T','W','T','F','S'];
+
+function timeToMinutes(t) {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+function minutesToTime(mins) {
+  const h = String(Math.floor(mins / 60)).padStart(2, '0');
+  const m = String(mins % 60).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+/** Turns the teacher's weekly teaching window into individual bookable
+ *  slots, minus anything covered by an unavailable block. */
+function generateCandidateSlots(weeklySchedule, unavailableBlocks) {
+  if (!weeklySchedule || !weeklySchedule.activeDays || !weeklySchedule.activeDays.length) return [];
+  const slotLen = weeklySchedule.slotLengthMinutes || 30;
+  const startMin = timeToMinutes(weeklySchedule.startTime || '15:00');
+  const endMin = timeToMinutes(weeklySchedule.endTime || '18:00');
+  const slots = [];
+  for (const day of weeklySchedule.activeDays) {
+    for (let cursor = startMin; cursor + slotLen <= endMin; cursor += slotLen) {
+      const cursorEnd = cursor + slotLen;
+      const blocked = (unavailableBlocks || []).some((b) =>
+        b.dayOfWeek === day && cursor < timeToMinutes(b.endTime) && cursorEnd > timeToMinutes(b.startTime)
+      );
+      if (!blocked) slots.push({ dayOfWeek: day, startTime: minutesToTime(cursor) });
+    }
+  }
+  return slots;
 }
 
 // ---------- Auth wiring ----------
@@ -266,7 +312,7 @@ async function deleteAccount() {
   const uid = state.user.uid;
   const batch = writeBatch(db);
   if (state.profile.role === 'teacher') {
-    const subcollections = ['students', 'availability', 'availabilityOverrides', 'lessons', 'rescheduleRequests'];
+    const subcollections = ['students', 'unavailableBlocks', 'lessons', 'rescheduleRequests'];
     for (const sub of subcollections) {
       const snap = await getDocs(collection(db, 'users', uid, sub));
       snap.forEach((d) => batch.delete(d.ref));
@@ -542,30 +588,107 @@ function renderTeacherDashboard() {
       </section>`;
   });
 
-  const unsubAvailability = onSnapshot(collection(db, 'users', state.user.uid, 'availability'), (snap) => {
-    const blocks = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.startTime.localeCompare(b.startTime));
+  let teacherUnavailableBlocks = [];
+  let pickerBlockDay = null;
+
+  function renderTeacherScheduleSection() {
     const box = document.getElementById('teacher-availability-section');
     if (!box) return;
+    const ws = state.profile.weeklySchedule || { activeDays: [], startTime: '15:00', endTime: '18:00', slotLengthMinutes: 30 };
+    const sortedBlocks = teacherUnavailableBlocks.slice().sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.startTime.localeCompare(b.startTime));
+
     box.innerHTML = `
       <section>
-        <h2>Weekly availability</h2>
-        <p>The open blocks students can choose their lesson time from.</p>
-        <form class="inline" onsubmit="window.addAvailabilityBlock(event)">
-          <select id="avail-day">${dayOptions(1)}</select>
-          <input id="avail-start" type="time" required />
-          <input id="avail-end" type="time" required />
+        <h2>Weekly teaching hours</h2>
+        <p>Which days you teach, and your general window on those days.</p>
+        <div class="day-pills">
+          ${DAY_LETTERS.map((letter, i) => `
+            <button type="button" class="day-pill ${ws.activeDays.includes(i) ? 'selected' : ''}" onclick="window.toggleActiveDay(${i})">${letter}</button>`).join('')}
+        </div>
+        <form class="inline" onsubmit="window.saveWeeklySchedule(event)">
+          <input id="ws-start" type="time" value="${ws.startTime}" required />
+          <input id="ws-end" type="time" value="${ws.endTime}" required />
+          <select id="ws-slot-length">
+            <option value="30" ${ws.slotLengthMinutes === 30 ? 'selected' : ''}>30 min</option>
+            <option value="45" ${ws.slotLengthMinutes === 45 ? 'selected' : ''}>45 min</option>
+            <option value="60" ${ws.slotLengthMinutes === 60 ? 'selected' : ''}>60 min</option>
+          </select>
+          <button class="ghost" type="submit">Save</button>
+        </form>
+      </section>
+
+      <section>
+        <h2>Mark times you're unavailable</h2>
+        <p>Pick a day, then a time range within your teaching hours to block off.</p>
+        <div class="day-pills">
+          ${DAY_LETTERS.map((letter, i) => `
+            <button type="button" class="day-pill ${pickerBlockDay === i ? 'selected' : ''}" onclick="window.pickBlockDay(${i})">${letter}</button>`).join('')}
+        </div>
+        <form class="inline" onsubmit="window.addUnavailableBlock(event)">
+          <input id="block-start" type="time" required />
+          <input id="block-end" type="time" required />
           <button class="ghost" type="submit">Add</button>
         </form>
-        ${blocks.length === 0 ? '' : blocks.map((b) => `
+        ${sortedBlocks.length === 0 ? '' : sortedBlocks.map((b) => `
           <div class="student-row">
             <span>${DAYS[b.dayOfWeek]} ${b.startTime}–${b.endTime}</span>
-            <button class="danger-link" onclick="window.deleteAvailabilityBlock('${b.id}')">Remove</button>
+            <button class="danger-link" onclick="window.deleteUnavailableBlock('${b.id}')">Remove</button>
           </div>`).join('')}
       </section>`;
+  }
+
+  const unsubUnavailable = onSnapshot(collection(db, 'users', state.user.uid, 'unavailableBlocks'), (snap) => {
+    teacherUnavailableBlocks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderTeacherScheduleSection();
   });
 
-  state.unsubs.push(unsubStudents, unsubRequests, unsubConnections, unsubAvailability);
+  window.pickBlockDay = function (dayIndex) {
+    pickerBlockDay = dayIndex;
+    renderTeacherScheduleSection();
+  };
+
+  window.addUnavailableBlock = async function (e) {
+    e.preventDefault();
+    if (pickerBlockDay === null) { alert('Pick a day first.'); return; }
+    const startTime = document.getElementById('block-start').value;
+    const endTime = document.getElementById('block-end').value;
+    if (!startTime || !endTime) return;
+    await addDoc(collection(db, 'users', state.user.uid, 'unavailableBlocks'), { dayOfWeek: pickerBlockDay, startTime, endTime });
+  };
+
+  window.deleteUnavailableBlock = async function (blockId) {
+    await deleteDoc(doc(db, 'users', state.user.uid, 'unavailableBlocks', blockId));
+  };
+
+  renderTeacherScheduleSection();
+
+  state.unsubs.push(unsubStudents, unsubRequests, unsubConnections, unsubUnavailable);
 }
+
+window.toggleActiveDay = async function (dayIndex) {
+  const ws = state.profile.weeklySchedule || { activeDays: [], startTime: '15:00', endTime: '18:00', slotLengthMinutes: 30 };
+  const activeDays = ws.activeDays.includes(dayIndex)
+    ? ws.activeDays.filter((d) => d !== dayIndex)
+    : [...ws.activeDays, dayIndex];
+  const updated = { ...ws, activeDays };
+  state.profile = { ...state.profile, weeklySchedule: updated };
+  await updateDoc(doc(db, 'users', state.user.uid), { weeklySchedule: updated });
+  render();
+};
+
+window.saveWeeklySchedule = async function (e) {
+  e.preventDefault();
+  const ws = state.profile.weeklySchedule || { activeDays: [], startTime: '15:00', endTime: '18:00', slotLengthMinutes: 30 };
+  const updated = {
+    ...ws,
+    startTime: document.getElementById('ws-start').value,
+    endTime: document.getElementById('ws-end').value,
+    slotLengthMinutes: Number(document.getElementById('ws-slot-length').value)
+  };
+  state.profile = { ...state.profile, weeklySchedule: updated };
+  await updateDoc(doc(db, 'users', state.user.uid), { weeklySchedule: updated });
+  render();
+};
 
 window.saveCutoff = async function (value) {
   await updateDoc(doc(db, 'users', state.user.uid), { rescheduleCutoffHours: Number(value) });
@@ -590,19 +713,6 @@ window.confirmStudentRequest = async function (request) {
 
 window.respondReschedule = async function (requestId, approve) {
   await respondToRequest(state.user.uid, requestId, approve);
-};
-
-window.addAvailabilityBlock = async function (e) {
-  e.preventDefault();
-  const dayOfWeek = Number(document.getElementById('avail-day').value);
-  const startTime = document.getElementById('avail-start').value;
-  const endTime = document.getElementById('avail-end').value;
-  if (!startTime || !endTime) return;
-  await addDoc(collection(db, 'users', state.user.uid, 'availability'), { dayOfWeek, startTime, endTime, recurring: true });
-};
-
-window.deleteAvailabilityBlock = async function (blockId) {
-  await deleteDoc(doc(db, 'users', state.user.uid, 'availability', blockId));
 };
 
 // ---------- Student view ----------
@@ -633,14 +743,21 @@ function renderStudentView() {
   let myLesson = null;
   let myStudentDoc = { recurringSlot: null, unavailableDates: [] };
   let allTeacherStudents = [];
-  let availabilityBlocks = [];
+  let teacherWeeklySchedule = null;
+  let teacherUnavailableBlocks = [];
   let showSlotPicker = false;
+  let pickerDay = null;
+  let reschedulePickerDay = null;
 
   function isSlotTaken(dayOfWeek, startTime) {
     return allTeacherStudents.some((s) =>
       s.id !== uid && s.recurringSlot &&
       s.recurringSlot.dayOfWeek === dayOfWeek && s.recurringSlot.startTime === startTime
     );
+  }
+
+  function candidateSlots() {
+    return generateCandidateSlots(teacherWeeklySchedule, teacherUnavailableBlocks);
   }
 
   function renderLessonTimeSection() {
@@ -657,17 +774,24 @@ function renderStudentView() {
       return;
     }
 
-    const openBlocks = availabilityBlocks.filter((b) => !isSlotTaken(b.dayOfWeek, b.startTime));
+    const activeDays = (teacherWeeklySchedule && teacherWeeklySchedule.activeDays) || [];
+    const daySlots = pickerDay === null ? [] : candidateSlots().filter((s) => s.dayOfWeek === pickerDay && !isSlotTaken(s.dayOfWeek, s.startTime));
+
     box.innerHTML = `
       <section>
         <h2>Choose your lesson time</h2>
-        <p>Pick one open slot from your teacher's weekly availability.</p>
-        ${openBlocks.length === 0
-          ? '<p>No open slots right now — check back, or ask your teacher.</p>'
-          : openBlocks.map((b) => `
-            <button class="slot-chip" onclick="window.chooseLessonSlot(${b.dayOfWeek}, '${b.startTime}')">
-              ${DAYS[b.dayOfWeek]} ${b.startTime}
-            </button>`).join('')}
+        <p>Pick a day, then a time.</p>
+        <div class="day-pills">
+          ${DAY_LETTERS.map((letter, i) => `
+            <button type="button" class="day-pill ${pickerDay === i ? 'selected' : ''} ${activeDays.includes(i) ? '' : 'disabled'}"
+              ${activeDays.includes(i) ? `onclick="window.pickLessonDay(${i})"` : 'disabled'}>${letter}</button>`).join('')}
+        </div>
+        ${pickerDay === null
+          ? '<p>Select a highlighted day above to see open times.</p>'
+          : daySlots.length === 0
+            ? '<p>No open times on that day — try another, or check back later.</p>'
+            : daySlots.map((s) => `
+              <button class="slot-chip" onclick="window.chooseLessonSlot(${s.dayOfWeek}, '${s.startTime}')">${s.startTime}</button>`).join('')}
         ${myStudentDoc.recurringSlot ? `<div style="margin-top:10px;"><button class="ghost" onclick="window.toggleSlotPicker()">Cancel</button></div>` : ''}
       </section>`;
   }
@@ -694,14 +818,21 @@ function renderStudentView() {
 
   window.toggleSlotPicker = function () {
     showSlotPicker = !showSlotPicker;
+    pickerDay = null;
+    renderLessonTimeSection();
+  };
+
+  window.pickLessonDay = function (dayIndex) {
+    pickerDay = dayIndex;
     renderLessonTimeSection();
   };
 
   window.chooseLessonSlot = async function (dayOfWeek, startTime) {
     await updateDoc(doc(db, 'users', teacherId, 'students', uid), {
-      recurringSlot: { dayOfWeek, startTime, durationMinutes: 30 }
+      recurringSlot: { dayOfWeek, startTime, durationMinutes: (teacherWeeklySchedule && teacherWeeklySchedule.slotLengthMinutes) || 30 }
     });
     showSlotPicker = false;
+    pickerDay = null;
   };
 
   window.addUnavailableDate = async function (e) {
@@ -721,6 +852,12 @@ function renderStudentView() {
     renderUnavailableSection();
   });
 
+  const unsubTeacherDoc = onSnapshot(doc(db, 'users', teacherId), (snap) => {
+    teacherWeeklySchedule = snap.exists() ? snap.data().weeklySchedule : null;
+    renderLessonTimeSection();
+    renderReschedulePicker();
+  });
+
   const unsubAllStudents = onSnapshot(collection(db, 'users', teacherId, 'students'), (snap) => {
     allTeacherStudents = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     renderLessonTimeSection();
@@ -734,33 +871,46 @@ function renderStudentView() {
       .sort((a, b) => new Date(a.date) - new Date(b.date))[0];
     myLesson = upcoming || null;
     const box = document.getElementById('my-lesson-section');
-    if (!box) return;
-    box.innerHTML = `
-      <section>
-        <h2>Upcoming lesson</h2>
-        ${myLesson
-          ? `<p>${myLesson.date} at ${myLesson.startTime}${myLesson.status === 'pending_reschedule' ? ' (reschedule pending teacher approval)' : ''}</p>`
-          : `<p>No upcoming lesson scheduled yet — check with your teacher.</p>`}
-      </section>`;
+    if (box) {
+      box.innerHTML = `
+        <section>
+          <h2>Upcoming lesson</h2>
+          ${myLesson
+            ? `<p>${myLesson.date} at ${myLesson.startTime}${myLesson.status === 'pending_reschedule' ? ' (reschedule pending teacher approval)' : ''}</p>`
+            : `<p>No upcoming lesson scheduled yet — check with your teacher.</p>`}
+        </section>`;
+    }
+    renderReschedulePicker();
   });
 
-  const unsubAvail = onSnapshot(collection(db, 'users', teacherId, 'availability'), (snap) => {
-    availabilityBlocks = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.startTime.localeCompare(b.startTime));
-    renderLessonTimeSection();
-
+  function renderReschedulePicker() {
     const box = document.getElementById('reschedule-picker-section');
     if (!box) return;
     if (!myLesson) { box.innerHTML = ''; return; }
+    const activeDays = (teacherWeeklySchedule && teacherWeeklySchedule.activeDays) || [];
+    const daySlots = reschedulePickerDay === null ? [] : candidateSlots().filter((s) => s.dayOfWeek === reschedulePickerDay);
     box.innerHTML = `
       <section>
         <h2>Reschedule this lesson</h2>
-        <p>Pick a new time to move your upcoming lesson into:</p>
-        ${availabilityBlocks.map((slot) => `
-          <button class="slot-chip" onclick="window.handleReschedule('${slot.startTime}')">
-            ${DAYS[slot.dayOfWeek]} ${slot.startTime}
-          </button>`).join('')}
+        <p>Pick a new day and time to move your upcoming lesson into:</p>
+        <div class="day-pills">
+          ${DAY_LETTERS.map((letter, i) => `
+            <button type="button" class="day-pill ${reschedulePickerDay === i ? 'selected' : ''} ${activeDays.includes(i) ? '' : 'disabled'}"
+              ${activeDays.includes(i) ? `onclick="window.pickRescheduleDay(${i})"` : 'disabled'}>${letter}</button>`).join('')}
+        </div>
+        ${reschedulePickerDay === null
+          ? ''
+          : daySlots.length === 0
+            ? '<p>No open times on that day.</p>'
+            : daySlots.map((s) => `
+              <button class="slot-chip" onclick="window.handleReschedule('${s.startTime}')">${s.startTime}</button>`).join('')}
       </section>`;
-  });
+  }
+
+  window.pickRescheduleDay = function (dayIndex) {
+    reschedulePickerDay = dayIndex;
+    renderReschedulePicker();
+  };
 
   window.handleReschedule = async function (toStartTime) {
     if (!myLesson) return;
@@ -772,7 +922,13 @@ function renderStudentView() {
     alert(result.autoApplied ? 'Lesson moved!' : "Sent to your teacher for approval — you're close to the cutoff window.");
   };
 
-  state.unsubs.push(unsubMyDoc, unsubAllStudents, unsubLesson, unsubAvail);
+  const unsubUnavailableBlocks = onSnapshot(collection(db, 'users', teacherId, 'unavailableBlocks'), (snap) => {
+    teacherUnavailableBlocks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderLessonTimeSection();
+    renderReschedulePicker();
+  });
+
+  state.unsubs.push(unsubMyDoc, unsubTeacherDoc, unsubAllStudents, unsubLesson, unsubUnavailableBlocks);
 }
 
 render();
