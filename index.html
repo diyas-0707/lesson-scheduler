@@ -193,7 +193,13 @@ onAuthStateChanged(auth, async (firebaseUser) => {
   render();
 });
 
-window.login = () => signInWithPopup(auth, googleProvider);
+window.login = async () => {
+  await signInWithPopup(auth, googleProvider);
+  // Firebase's popup sign-in doesn't always reliably notify this tab that
+  // it finished, which can leave the UI showing empty sections until a
+  // manual refresh. Reloading here does that refresh automatically.
+  location.reload();
+};
 window.logout = () => signOut(auth);
 
 // ---------- Connection helpers ----------
