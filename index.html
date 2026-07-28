@@ -552,6 +552,7 @@ function renderTeacherDashboard() {
             ${s.unavailableDates && s.unavailableDates.length > 0
               ? `<span style="font-size:12px; color:var(--ink-soft);">Out: ${s.unavailableDates.slice().sort().join(', ')}</span>`
               : ''}
+            <button class="danger-link" style="font-size:12px;" onclick="window.removeStudent('${s.id}', '${(s.name || '').replace(/'/g, "&apos;")}')">Remove from roster</button>
           </div>`).join('')}
       </section>`;
   });
@@ -713,6 +714,21 @@ window.inviteStudentByEmail = async function (e) {
   }
 };
 
+window.removeStudent = async function (studentId, studentName) {
+  if (!confirm(`Remove ${studentName} from your roster? This frees up their lesson slot.`)) return;
+  const teacherId = state.user.uid;
+  const batch = writeBatch(db);
+  batch.delete(doc(db, 'users', teacherId, 'students', studentId));
+  const lessonsSnap = await getDocs(query(collection(db, 'users', teacherId, 'lessons'), where('studentId', '==', studentId)));
+  lessonsSnap.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+  // Best-effort: if that student's own account still points at this
+  // teacher, unlink it too (harmless if the account no longer exists).
+  try {
+    await updateDoc(doc(db, 'users', studentId), { teacherId: null, role: null });
+  } catch (err) { /* ignore — their account may not exist anymore */ }
+};
+
 window.confirmStudentRequest = async function (request) {
   await acceptConnectionRequest(request.id, request);
 };
@@ -797,7 +813,7 @@ function renderStudentView() {
           : daySlots.length === 0
             ? '<p>No times in that day\'s window — check your teacher\'s weekly hours.</p>'
             : daySlots.map((s) => isSlotTaken(s.dayOfWeek, s.startTime)
-              ? `<button class="slot-chip" disabled title="Already taken">${s.startTime}</button>`
+              ? `<button class="slot-chip" disabled>${s.startTime} · taken</button>`
               : `<button class="slot-chip" onclick="window.chooseLessonSlot(${s.dayOfWeek}, '${s.startTime}')">${s.startTime}</button>`
             ).join('')}
         ${myStudentDoc.recurringSlot ? `<div style="margin-top:10px;"><button class="ghost" onclick="window.toggleSlotPicker()">Cancel</button></div>` : ''}
@@ -839,8 +855,10 @@ function renderStudentView() {
     await updateDoc(doc(db, 'users', teacherId, 'students', uid), {
       recurringSlot: { dayOfWeek, startTime, durationMinutes: (teacherWeeklySchedule && teacherWeeklySchedule.slotLengthMinutes) || 30 }
     });
+    myStudentDoc = { ...myStudentDoc, recurringSlot: { dayOfWeek, startTime } };
     showSlotPicker = false;
     pickerDay = null;
+    renderLessonTimeSection();
   };
 
   window.addUnavailableDate = async function (e) {
@@ -910,8 +928,10 @@ function renderStudentView() {
           ? ''
           : daySlots.length === 0
             ? '<p>No open times on that day.</p>'
-            : daySlots.map((s) => `
-              <button class="slot-chip" onclick="window.handleReschedule('${s.startTime}')">${s.startTime}</button>`).join('')}
+            : daySlots.map((s) => isSlotTaken(s.dayOfWeek, s.startTime)
+              ? `<button class="slot-chip" disabled>${s.startTime} · taken</button>`
+              : `<button class="slot-chip" onclick="window.handleReschedule('${s.startTime}')">${s.startTime}</button>`
+            ).join('')}
       </section>`;
   }
 
