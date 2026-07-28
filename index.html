@@ -775,7 +775,7 @@ function renderStudentView() {
     }
 
     const activeDays = (teacherWeeklySchedule && teacherWeeklySchedule.activeDays) || [];
-    const daySlots = pickerDay === null ? [] : candidateSlots().filter((s) => s.dayOfWeek === pickerDay && !isSlotTaken(s.dayOfWeek, s.startTime));
+    const daySlots = pickerDay === null ? [] : candidateSlots().filter((s) => s.dayOfWeek === pickerDay);
 
     box.innerHTML = `
       <section>
@@ -789,9 +789,11 @@ function renderStudentView() {
         ${pickerDay === null
           ? '<p>Select a highlighted day above to see open times.</p>'
           : daySlots.length === 0
-            ? '<p>No open times on that day — try another, or check back later.</p>'
-            : daySlots.map((s) => `
-              <button class="slot-chip" onclick="window.chooseLessonSlot(${s.dayOfWeek}, '${s.startTime}')">${s.startTime}</button>`).join('')}
+            ? '<p>No times in that day\'s window — check your teacher\'s weekly hours.</p>'
+            : daySlots.map((s) => isSlotTaken(s.dayOfWeek, s.startTime)
+              ? `<button class="slot-chip" disabled title="Already taken">${s.startTime}</button>`
+              : `<button class="slot-chip" onclick="window.chooseLessonSlot(${s.dayOfWeek}, '${s.startTime}')">${s.startTime}</button>`
+            ).join('')}
         ${myStudentDoc.recurringSlot ? `<div style="margin-top:10px;"><button class="ghost" onclick="window.toggleSlotPicker()">Cancel</button></div>` : ''}
       </section>`;
   }
