@@ -148,6 +148,18 @@ function minutesToTime(mins) {
   return `${h}:${m}`;
 }
 
+/** Displays a stored 24-hour "HH:MM" as 12-hour with AM/PM. Storage,
+ *  sorting, and comparisons stay in 24-hour — only display changes. */
+function formatTime12(t) {
+  if (!t) return t;
+  const [hStr, mStr] = t.split(':');
+  let h = parseInt(hStr, 10);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12;
+  if (h === 0) h = 12;
+  return `${h}:${mStr} ${ampm}`;
+}
+
 /** Turns the teacher's weekly teaching window into individual bookable
  *  recurring slots (unavailable dates are one-off exceptions, shown
  *  separately, and don't remove a slot from the permanent weekly pool). */
@@ -544,7 +556,7 @@ function renderTeacherDashboard() {
           <div class="student-row" style="flex-direction:column; align-items:flex-start; gap:4px;">
             <div style="display:flex; justify-content:space-between; width:100%;">
               <span>${s.name}</span>
-              <span>${s.recurringSlot ? `${DAYS[s.recurringSlot.dayOfWeek]} ${s.recurringSlot.startTime}` : 'No slot chosen yet'}</span>
+              <span>${s.recurringSlot ? `${DAYS[s.recurringSlot.dayOfWeek]} ${formatTime12(s.recurringSlot.startTime)}` : 'No slot chosen yet'}</span>
             </div>
             ${s.unavailableDates && s.unavailableDates.length > 0
               ? `<span style="font-size:12px; color:var(--ink-soft);">Out: ${s.unavailableDates.slice().sort().join(', ')}</span>`
@@ -598,7 +610,7 @@ function renderTeacherDashboard() {
     const box = document.getElementById('teacher-availability-section');
     if (!box) return;
     const ws = state.profile.weeklySchedule || { activeDays: [], startTime: '15:00', endTime: '18:00', slotLengthMinutes: 30 };
-    const sortedBlocks = teacherUnavailableBlocks.slice().sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+    const sortedBlocks = teacherUnavailableBlocks.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.startTime.localeCompare(b.startTime));
 
     box.innerHTML = `
       <section>
@@ -631,7 +643,7 @@ function renderTeacherDashboard() {
         </form>
         ${sortedBlocks.length === 0 ? '' : sortedBlocks.map((b) => `
           <div class="student-row">
-            <span>${b.date} ${b.startTime}–${b.endTime}</span>
+            <span>${b.date ? `${b.date} ${formatTime12(b.startTime)}–${formatTime12(b.endTime)}` : `${DAYS[b.dayOfWeek]} ${formatTime12(b.startTime)}–${formatTime12(b.endTime)} (old format)`}</span>
             <button class="danger-link" onclick="window.deleteUnavailableBlock('${b.id}')">Remove</button>
           </div>`).join('')}
       </section>`;
@@ -779,7 +791,7 @@ function renderStudentView() {
       box.innerHTML = `
         <section>
           <h2>Your weekly lesson time</h2>
-          <p class="current-slot">${DAYS[myStudentDoc.recurringSlot.dayOfWeek]} at ${myStudentDoc.recurringSlot.startTime}</p>
+          <p class="current-slot">${DAYS[myStudentDoc.recurringSlot.dayOfWeek]} at ${formatTime12(myStudentDoc.recurringSlot.startTime)}</p>
           <button class="ghost" onclick="window.toggleSlotPicker()">Change time</button>
         </section>`;
       return;
@@ -802,8 +814,8 @@ function renderStudentView() {
           : daySlots.length === 0
             ? '<p>No times in that day\'s window — check your teacher\'s weekly hours.</p>'
             : daySlots.map((s) => isSlotTaken(s.dayOfWeek, s.startTime)
-              ? `<button class="slot-chip" disabled>${s.startTime} · taken</button>`
-              : `<button class="slot-chip" onclick="window.chooseLessonSlot(${s.dayOfWeek}, '${s.startTime}')">${s.startTime}</button>`
+              ? `<button class="slot-chip" disabled>${formatTime12(s.startTime)} · taken</button>`
+              : `<button class="slot-chip" onclick="window.chooseLessonSlot(${s.dayOfWeek}, '${s.startTime}')">${formatTime12(s.startTime)}</button>`
             ).join('')}
         ${myStudentDoc.recurringSlot ? `<div style="margin-top:10px;"><button class="ghost" onclick="window.toggleSlotPicker()">Cancel</button></div>` : ''}
       </section>`;
@@ -891,7 +903,7 @@ function renderStudentView() {
         <section>
           <h2>Upcoming lesson</h2>
           ${myLesson
-            ? `<p>${myLesson.date} at ${myLesson.startTime}${myLesson.status === 'pending_reschedule' ? ' (reschedule pending teacher approval)' : ''}</p>`
+            ? `<p>${myLesson.date} at ${formatTime12(myLesson.startTime)}${myLesson.status === 'pending_reschedule' ? ' (reschedule pending teacher approval)' : ''}</p>`
             : `<p>No upcoming lesson scheduled yet — check with your teacher.</p>`}
         </section>`;
     }
@@ -918,8 +930,8 @@ function renderStudentView() {
           : daySlots.length === 0
             ? '<p>No open times on that day.</p>'
             : daySlots.map((s) => isSlotTaken(s.dayOfWeek, s.startTime)
-              ? `<button class="slot-chip" disabled>${s.startTime} · taken</button>`
-              : `<button class="slot-chip" onclick="window.handleReschedule('${s.startTime}')">${s.startTime}</button>`
+              ? `<button class="slot-chip" disabled>${formatTime12(s.startTime)} · taken</button>`
+              : `<button class="slot-chip" onclick="window.handleReschedule('${s.startTime}')">${formatTime12(s.startTime)}</button>`
             ).join('')}
       </section>`;
   }
@@ -953,7 +965,7 @@ function renderStudentView() {
       box.innerHTML = upcoming.length === 0 ? '' : `
         <section>
           <h2>Your teacher is unavailable</h2>
-          ${upcoming.map((b) => `<p style="margin:0 0 4px;">${b.date}, ${b.startTime}–${b.endTime}</p>`).join('')}
+          ${upcoming.map((b) => `<p style="margin:0 0 4px;">${b.date}, ${formatTime12(b.startTime)}–${formatTime12(b.endTime)}</p>`).join('')}
         </section>`;
     }
   });
