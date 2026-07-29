@@ -512,19 +512,44 @@ async function respondToRequest(teacherId, requestId, approve) {
   await updateDoc(requestRef, { status: approve ? 'approved' : 'denied' });
 }
 
-// ---------- One-off reschedule proposals (either side flags a specific
-// date's conflicting lesson; the OTHER side picks a new day/time for that
-// occurrence only — the permanent weekly slot is untouched). ----------
-async function proposeReschedule(teacherId, studentId, originalDate, originalStartTime, requestedBy) {
+// ---------- One-off reschedule negotiation (either side flags a specific
+// date's conflicting lesson; the two sides take turns proposing/confirming
+// a new day and time for that occurrence only — the permanent weekly slot
+// is untouched). Only one active negotiation per student at a time. ----------
+function otherParty(party) { return party === 'teacher' ? 'student' : 'teacher'; }
+
+function hasActiveProposal(proposalsForStudent) {
+  return (proposalsForStudent || []).some((p) => p.status === 'active');
+}
+
+async function createRescheduleProposal(teacherId, studentId, originalDate, originalStartTime, requestedBy) {
   await addDoc(collection(db, 'users', teacherId, 'students', studentId, 'rescheduleProposals'), {
-    originalDate, originalStartTime, requestedBy, status: 'pending', newDate: null, newStartTime: null, createdAt: serverTimestamp()
+    requestedBy, originalDate, originalStartTime,
+    status: 'active', mode: 'pick', turnOwner: otherParty(requestedBy),
+    proposedDate: null, proposedStartTime: null, proposedBy: null,
+    createdAt: serverTimestamp()
   });
 }
 
-async function resolveRescheduleProposal(teacherId, studentId, proposalId, newDate, newStartTime) {
+async function submitProposedTime(teacherId, studentId, proposalId, actingParty, date, time) {
   await updateDoc(doc(db, 'users', teacherId, 'students', studentId, 'rescheduleProposals', proposalId), {
-    newDate, newStartTime, status: 'resolved'
+    proposedDate: date, proposedStartTime: time, proposedBy: actingParty,
+    mode: 'confirm', turnOwner: otherParty(actingParty)
   });
+}
+
+async function confirmProposedTime(teacherId, studentId, proposalId, accept) {
+  if (accept) {
+    await updateDoc(doc(db, 'users', teacherId, 'students', studentId, 'rescheduleProposals', proposalId), {
+      status: 'confirmed', mode: null
+    });
+  } else {
+    // Declining party now picks their own alternative — turnOwner stays on
+    // them, just switches from confirming to picking.
+    await updateDoc(doc(db, 'users', teacherId, 'students', studentId, 'rescheduleProposals', proposalId), {
+      mode: 'pick'
+    });
+  }
 }
 
 // ---------- Account deletion ----------
@@ -920,7 +945,8 @@ function renderTeacherCalendarTab() {
   window.openDayDetail = function (iso) { expandedDate = iso; draw(); };
   window.closeDayDetail = function () { expandedDate = null; draw(); };
   window.sendRescheduleProposal = async function (studentId, originalDate, originalStartTime) {
-    await proposeReschedule(teacherId, studentId, originalDate, originalStartTime, 'teacher');
+    if (hasActiveProposal(studentProposalsMap[studentId])) return; // already one in flight
+    await createRescheduleProposal(teacherId, studentId, originalDate, originalStartTime, 'teacher');
     draw();
   };
 
@@ -939,7 +965,7 @@ function renderTeacherCalendarTab() {
           .sort((a, b) => a.recurringSlot.startTime.localeCompare(b.recurringSlot.startTime))
           .forEach((s) => {
             const proposals = studentProposalsMap[s.id] || [];
-            const movedAway = proposals.some((p) => p.status === 'resolved' && p.originalDate === iso);
+            const movedAway = proposals.some((p) => p.status === 'confirmed' && p.originalDate === iso);
             if (movedAway) return; // this occurrence was moved elsewhere, don't show it here
 
             const firstName = (s.name || '').split(' ')[0];
@@ -949,15 +975,15 @@ function renderTeacherCalendarTab() {
             const conflict = (studentUnavailableMap[s.id] || [])
               .filter((u) => u.date === iso)
               .some((u) => rangesOverlap(lessonStartMin, lessonEndMin, timeToMinutes(u.startTime), timeToMinutes(u.endTime)));
-            const pendingProposal = proposals.find((p) => p.status === 'pending' && p.originalDate === iso);
-            const suffix = pendingProposal ? ' (reschedule requested)' : '';
+            const active = proposals.find((p) => p.status === 'active');
+            const suffix = active ? ' (reschedule in progress)' : '';
             const label = verbose
               ? `${conflict ? '⚠ Conflict — ' : ''}Lesson with ${s.name}, ${formatTime12(s.recurringSlot.startTime)}–${formatTime12(minutesToTime(lessonEndMin))}${suffix}`
               : `${conflict ? '⚠ ' : ''}${formatTimeCompact(s.recurringSlot.startTime)} ${firstName}`;
             blocks.push({
               type: 'lesson', color: colorForStudent(s.id), conflict, label,
               studentId: s.id, date: iso, startTime: s.recurringSlot.startTime,
-              pendingProposalDirection: pendingProposal ? pendingProposal.requestedBy : null
+              activeProposal: active || null
             });
           });
         students.forEach((s) => {
@@ -970,18 +996,18 @@ function renderTeacherCalendarTab() {
           });
         });
       }
-      // Lessons that moved TO this date via a resolved proposal (may not be
-      // this student's normal weekday at all — it's a one-off makeup slot).
+      // Lessons that moved TO this date via a confirmed negotiation (may not
+      // be this student's normal weekday at all — it's a one-off makeup).
       students.forEach((s) => {
         (studentProposalsMap[s.id] || [])
-          .filter((p) => p.status === 'resolved' && p.newDate === iso)
+          .filter((p) => p.status === 'confirmed' && p.proposedDate === iso)
           .forEach((p) => {
             const firstName = (s.name || '').split(' ')[0];
             const durationMin = (s.recurringSlot && s.recurringSlot.durationMinutes) || 30;
-            const endTime = minutesToTime(timeToMinutes(p.newStartTime) + durationMin);
+            const endTime = minutesToTime(timeToMinutes(p.proposedStartTime) + durationMin);
             const label = verbose
-              ? `Lesson with ${s.name} (rescheduled), ${formatTime12(p.newStartTime)}–${formatTime12(endTime)}`
-              : `${formatTimeCompact(p.newStartTime)} ${firstName} (moved)`;
+              ? `Lesson with ${s.name} (rescheduled), ${formatTime12(p.proposedStartTime)}–${formatTime12(endTime)}`
+              : `${formatTimeCompact(p.proposedStartTime)} ${firstName} (moved)`;
             blocks.push({ type: 'lesson', color: colorForStudent(s.id), label });
           });
       });
@@ -1018,11 +1044,9 @@ function renderTeacherCalendarTab() {
             <div class="day-detail-event">
               <div>${b.label}</div>
               ${b.type === 'lesson' && b.conflict
-                ? (b.pendingProposalDirection === 'teacher'
-                    ? `<p style="margin:6px 0 0; font-size:12px; color:var(--ink-soft);">Reschedule requested — waiting on student.</p>`
-                    : b.pendingProposalDirection === 'student'
-                      ? `<p style="margin:6px 0 0; font-size:12px; color:var(--ink-soft);">Student requested a reschedule — pick a new time on the Schedule tab.</p>`
-                      : `<button class="ghost" style="margin-top:6px; padding:6px 10px; font-size:12px;" onclick="window.sendRescheduleProposal('${b.studentId}', '${b.date}', '${b.startTime}')">Propose reschedule</button>`)
+                ? (b.activeProposal
+                    ? `<p style="margin:6px 0 0; font-size:12px; color:var(--ink-soft);">${b.activeProposal.turnOwner === 'teacher' ? "It's your turn — respond on the Schedule tab." : 'Waiting on the student — reschedule in progress.'}</p>`
+                    : `<button class="ghost" style="margin-top:6px; padding:6px 10px; font-size:12px;" onclick="window.sendRescheduleProposal('${b.studentId}', '${b.date}', '${b.startTime}')">Propose reschedule</button>`)
                 : ''}
             </div>`).join('')}
         </div>`;
@@ -1088,7 +1112,8 @@ function renderStudentCalendarTab() {
   window.openDayDetail = function (iso) { expandedDate = iso; draw(); };
   window.closeDayDetail = function () { expandedDate = null; draw(); };
   window.requestRescheduleFromStudent = async function (originalDate, originalStartTime) {
-    await proposeReschedule(teacherId, uid, originalDate, originalStartTime, 'student');
+    if (hasActiveProposal(myProposals)) return; // already one in flight
+    await createRescheduleProposal(teacherId, uid, originalDate, originalStartTime, 'student');
     draw();
   };
 
@@ -1101,8 +1126,8 @@ function renderStudentCalendarTab() {
       const dow = d.getDay();
       const iso = isoDate(d);
       const blocks = [];
-      const movedAway = myProposals.some((p) => p.status === 'resolved' && p.originalDate === iso);
-      const pendingProposal = myProposals.find((p) => p.status === 'pending' && p.originalDate === iso);
+      const movedAway = myProposals.some((p) => p.status === 'confirmed' && p.originalDate === iso);
+      const active = myProposals.find((p) => p.status === 'active');
       if (myStudentDoc.recurringSlot && myStudentDoc.recurringSlot.dayOfWeek === dow && !movedAway) {
         const durationMin = myStudentDoc.recurringSlot.durationMinutes || 30;
         const startMin = timeToMinutes(myStudentDoc.recurringSlot.startTime);
@@ -1111,22 +1136,22 @@ function renderStudentCalendarTab() {
         const conflict = myUnavailableDates
           .filter((u) => u.date === iso)
           .some((u) => rangesOverlap(startMin, endMin, timeToMinutes(u.startTime), timeToMinutes(u.endTime)));
-        const suffix = pendingProposal ? ' (reschedule requested)' : '';
+        const suffix = active ? ' (reschedule in progress)' : '';
         const label = verbose
           ? `${conflict ? '⚠ Conflict — ' : ''}Your lesson, ${formatTime12(myStudentDoc.recurringSlot.startTime)}–${formatTime12(endTime)}${suffix}`
           : `${conflict ? '⚠ ' : ''}${formatTimeCompact(myStudentDoc.recurringSlot.startTime)} Lesson`;
         blocks.push({
           type: 'lesson', color: '#8C6D3F', label, conflict,
           date: iso, startTime: myStudentDoc.recurringSlot.startTime,
-          pendingProposalDirection: pendingProposal ? pendingProposal.requestedBy : null
+          activeProposal: active || null
         });
       }
-      myProposals.filter((p) => p.status === 'resolved' && p.newDate === iso).forEach((p) => {
+      myProposals.filter((p) => p.status === 'confirmed' && p.proposedDate === iso).forEach((p) => {
         const durationMin = (myStudentDoc.recurringSlot && myStudentDoc.recurringSlot.durationMinutes) || 30;
-        const endTime = minutesToTime(timeToMinutes(p.newStartTime) + durationMin);
+        const endTime = minutesToTime(timeToMinutes(p.proposedStartTime) + durationMin);
         const label = verbose
-          ? `Your lesson (rescheduled), ${formatTime12(p.newStartTime)}–${formatTime12(endTime)}`
-          : `${formatTimeCompact(p.newStartTime)} Lesson (moved)`;
+          ? `Your lesson (rescheduled), ${formatTime12(p.proposedStartTime)}–${formatTime12(endTime)}`
+          : `${formatTimeCompact(p.proposedStartTime)} Lesson (moved)`;
         blocks.push({ type: 'lesson', color: '#8C6D3F', label });
       });
       const freeSlots = candidates
@@ -1169,11 +1194,9 @@ function renderStudentCalendarTab() {
             <div class="day-detail-event">
               <div>${b.label}</div>
               ${b.type === 'lesson' && b.conflict
-                ? (b.pendingProposalDirection === 'student'
-                    ? `<p style="margin:6px 0 0; font-size:12px; color:var(--ink-soft);">Reschedule requested — waiting on your teacher.</p>`
-                    : b.pendingProposalDirection === 'teacher'
-                      ? `<p style="margin:6px 0 0; font-size:12px; color:var(--ink-soft);">Your teacher proposed a reschedule — pick a new time on the Schedule tab.</p>`
-                      : `<button class="ghost" style="margin-top:6px; padding:6px 10px; font-size:12px;" onclick="window.requestRescheduleFromStudent('${b.date}', '${b.startTime}')">Request reschedule</button>`)
+                ? (b.activeProposal
+                    ? `<p style="margin:6px 0 0; font-size:12px; color:var(--ink-soft);">${b.activeProposal.turnOwner === 'student' ? "It's your turn — respond on the Schedule tab." : 'Waiting on your teacher — reschedule in progress.'}</p>`
+                    : `<button class="ghost" style="margin-top:6px; padding:6px 10px; font-size:12px;" onclick="window.requestRescheduleFromStudent('${b.date}', '${b.startTime}')">Request reschedule</button>`)
                 : ''}
             </div>`).join('')}
         </div>`;
@@ -1490,26 +1513,36 @@ function renderTeacherScheduleTab() {
     });
     return openSlots.length === 0
       ? '<p>No open times that day.</p>'
-      : openSlots.map((s) => `<button class="slot-chip" onclick="window.teacherResolveProposal('${studentId}', '${proposalId}', '${chosenDate}', '${s.startTime}')">${formatTime12(s.startTime)}</button>`).join('');
+      : openSlots.map((s) => `<button class="slot-chip" onclick="window.teacherSubmitProposedTime('${studentId}', '${proposalId}', '${chosenDate}', '${s.startTime}')">${formatTime12(s.startTime)}</button>`).join('');
   }
 
   function renderStudentRequestsSection() {
     const box = document.getElementById('student-requests-section');
     if (!box) return;
-    const allPending = [];
+    const myTurn = [];
     studentsForProposals.forEach((s) => {
-      (studentProposalsMap2[s.id] || []).filter((p) => p.requestedBy === 'student' && p.status === 'pending')
-        .forEach((p) => allPending.push({ ...p, studentId: s.id, studentName: s.name }));
+      (studentProposalsMap2[s.id] || []).filter((p) => p.status === 'active' && p.turnOwner === 'teacher')
+        .forEach((p) => myTurn.push({ ...p, studentId: s.id, studentName: s.name }));
     });
-    if (allPending.length === 0) { box.innerHTML = ''; return; }
+    if (myTurn.length === 0) { box.innerHTML = ''; return; }
     box.innerHTML = `
       <section>
-        <h2>Reschedule requests from students</h2>
-        ${allPending.map((p) => {
+        <h2>Reschedule — your turn</h2>
+        ${myTurn.map((p) => {
+          if (p.mode === 'confirm') {
+            return `
+              <div class="request-card">
+                <p style="margin:0;">${p.studentName} proposed moving the lesson (originally ${p.originalDate} at ${formatTime12(p.originalStartTime)}) to <strong>${p.proposedDate} at ${formatTime12(p.proposedStartTime)}</strong>. Does that work?</p>
+                <div>
+                  <button class="primary" onclick="window.teacherConfirmProposedTime('${p.studentId}', '${p.id}', true)">Yes</button>
+                  <button class="ghost" onclick="window.teacherConfirmProposedTime('${p.studentId}', '${p.id}', false)">No</button>
+                </div>
+              </div>`;
+          }
           const chosenDate = proposalDatePicks[p.id] || '';
           return `
             <div class="request-card">
-              <p style="margin:0;">${p.studentName}: ${p.originalDate} at ${formatTime12(p.originalStartTime)}</p>
+              <p style="margin:0;">${p.studentName}: originally ${p.originalDate} at ${formatTime12(p.originalStartTime)}. Pick a new day and time to offer:</p>
               <input id="teacher-pick-date-${p.id}" type="date" value="${chosenDate}" onchange="window.pickTeacherProposalDate('${p.id}', '${p.studentId}', this.value)" />
               <div id="teacher-pick-slots-${p.id}" style="margin-top:6px;">${computeTeacherPickerSlotsHtml(p.id, p.studentId, chosenDate)}</div>
             </div>`;
@@ -1523,8 +1556,12 @@ function renderTeacherScheduleTab() {
     if (slotsBox) slotsBox.innerHTML = computeTeacherPickerSlotsHtml(proposalId, studentId, dateStr);
   };
 
-  window.teacherResolveProposal = async function (studentId, proposalId, newDate, newStartTime) {
-    await resolveRescheduleProposal(teacherId, studentId, proposalId, newDate, newStartTime);
+  window.teacherSubmitProposedTime = async function (studentId, proposalId, date, time) {
+    await submitProposedTime(teacherId, studentId, proposalId, 'teacher', date, time);
+  };
+
+  window.teacherConfirmProposedTime = async function (studentId, proposalId, accept) {
+    await confirmProposedTime(teacherId, studentId, proposalId, accept);
   };
 
   const unsubStudentsForProposals = onSnapshot(collection(db, 'users', teacherId, 'students'), (snap) => {
@@ -1641,20 +1678,29 @@ function renderStudentScheduleTab() {
         rangesOverlap(timeToMinutes(s.startTime), timeToMinutes(s.startTime) + slotLen, timeToMinutes(b.startTime), timeToMinutes(b.endTime))));
     return slots.length === 0
       ? '<p>No open times that day — try another date.</p>'
-      : slots.map((s) => `<button class="slot-chip" onclick="window.pickProposalSlot('${proposalId}', '${chosenDate}', '${s.startTime}')">${formatTime12(s.startTime)}</button>`).join('');
+      : slots.map((s) => `<button class="slot-chip" onclick="window.studentSubmitProposedTime('${proposalId}', '${chosenDate}', '${s.startTime}')">${formatTime12(s.startTime)}</button>`).join('');
   }
 
   function renderProposalsSection() {
     const box = document.getElementById('reschedule-proposal-section');
     if (!box) return;
-    const pending = myProposals.filter((p) => p.status === 'pending');
-    if (pending.length === 0) { box.innerHTML = ''; return; }
-    box.innerHTML = pending.map((p) => {
-      if (p.requestedBy === 'student') {
+    const myTurn = myProposals.filter((p) => p.status === 'active' && p.turnOwner === 'student');
+    const waitingOnTeacher = myProposals.filter((p) => p.status === 'active' && p.turnOwner === 'teacher');
+    if (myTurn.length === 0 && waitingOnTeacher.length === 0) { box.innerHTML = ''; return; }
+    box.innerHTML = waitingOnTeacher.map((p) => `
+      <section>
+        <h2>Reschedule requested</h2>
+        <p>Lesson originally ${p.originalDate} at ${formatTime12(p.originalStartTime)} — waiting on your teacher.</p>
+      </section>`).join('') + myTurn.map((p) => {
+      if (p.mode === 'confirm') {
         return `
           <section>
-            <h2>Reschedule requested</h2>
-            <p>You asked to move your lesson on ${p.originalDate} at ${formatTime12(p.originalStartTime)} — waiting on your teacher to offer a new time.</p>
+            <h2>Reschedule — your turn</h2>
+            <p>Your teacher proposed moving the lesson (originally ${p.originalDate} at ${formatTime12(p.originalStartTime)}) to <strong>${p.proposedDate} at ${formatTime12(p.proposedStartTime)}</strong>. Does that work?</p>
+            <div style="display:flex; gap:8px;">
+              <button class="primary" onclick="window.studentConfirmProposedTime('${p.id}', true)">Yes</button>
+              <button class="ghost" onclick="window.studentConfirmProposedTime('${p.id}', false)">No</button>
+            </div>
           </section>`;
       }
       const chosenDate = proposalPickerState[p.id] || '';
@@ -1676,8 +1722,12 @@ function renderStudentScheduleTab() {
     if (slotsBox) slotsBox.innerHTML = computeProposalSlotsHtml(proposalId, dateStr);
   };
 
-  window.pickProposalSlot = async function (proposalId, newDate, newStartTime) {
-    await resolveRescheduleProposal(teacherId, uid, proposalId, newDate, newStartTime);
+  window.studentSubmitProposedTime = async function (proposalId, date, time) {
+    await submitProposedTime(teacherId, uid, proposalId, 'student', date, time);
+  };
+
+  window.studentConfirmProposedTime = async function (proposalId, accept) {
+    await confirmProposedTime(teacherId, uid, proposalId, accept);
   };
 
   function renderLessonTimeSection() {
