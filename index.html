@@ -137,9 +137,11 @@
   .calendar-day-col.today { border-color: var(--brass-deep); }
   .calendar-day-header { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--ink-soft); text-align: center; margin-bottom: 6px; }
   .calendar-day-header b { display: block; color: var(--ink); font-size: 13px; }
-  .calendar-block { border-radius: 6px; padding: 4px 6px; font-size: 10.5px; line-height: 1.3; margin-bottom: 4px; color: #fff; }
+  .calendar-block { border-radius: 6px; padding: 3px 6px; font-size: 10.5px; line-height: 1.5; margin-bottom: 4px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .calendar-block.unavailable { background: #9aa0a8; color: #fff; }
+  .calendar-block.student-unavailable { background: #C48E93; color: #fff; }
   .calendar-block.free { background: transparent; border: 1px dashed var(--sage); color: var(--sage); }
+  .calendar-block.conflict { box-shadow: inset 0 0 0 2px #A94438; }
 
   .calendar-month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
   .calendar-month-cell { background: var(--paper-raised); border: 1px solid var(--rule-light); border-radius: 8px; padding: 5px; min-height: 62px; font-size: 10px; }
@@ -346,6 +348,21 @@ function mergeFreeRanges(sortedFreeSlots, slotLenMinutes) {
   });
   if (rangeStartMin !== null) ranges.push({ startTime: minutesToTime(rangeStartMin), endTime: minutesToTime(rangeEndMin) });
   return ranges;
+}
+
+/** Very compact time for narrow calendar blocks, e.g. "3p", "3:30p". */
+function formatTimeCompact(t) {
+  if (!t) return t;
+  const [hStr, mStr] = t.split(':');
+  let h = parseInt(hStr, 10);
+  const ampm = h >= 12 ? 'p' : 'a';
+  h = h % 12;
+  if (h === 0) h = 12;
+  return mStr === '00' ? `${h}${ampm}` : `${h}:${mStr}${ampm}`;
+}
+
+function rangesOverlap(aStartMin, aEndMin, bStartMin, bEndMin) {
+  return aStartMin < bEndMin && bStartMin < aEndMin;
 }
 
 // ---------- Auth wiring ----------
@@ -794,7 +811,10 @@ function weekGridHtml(getBlocksForDate) {
     html += `
       <div class="calendar-day-col ${isSameDate(d, today) ? 'today' : ''}">
         <div class="calendar-day-header">${DAY_LETTERS[d.getDay()]}<b>${d.getMonth() + 1}/${d.getDate()}</b></div>
-        ${blocks.map((b) => `<div class="calendar-block ${b.type === 'unavailable' ? 'unavailable' : (b.type === 'free' ? 'free' : '')}" style="${b.type === 'lesson' ? `background:${b.color};` : ''}">${b.label}</div>`).join('')}
+        ${blocks.map((b) => {
+          const typeClass = b.type === 'unavailable' ? 'unavailable' : (b.type === 'free' ? 'free' : (b.type === 'student-unavailable' ? 'student-unavailable' : ''));
+          return `<div class="calendar-block ${typeClass} ${b.conflict ? 'conflict' : ''}" style="${b.type === 'lesson' ? `background:${b.color};` : ''}">${b.label}</div>`;
+        }).join('')}
       </div>`;
   }
   html += '</div>';
@@ -832,6 +852,25 @@ function renderTeacherCalendarTab() {
 
   let students = [];
   let unavailableBlocks = [];
+  let studentUnavailableMap = {};
+  let studentUnavailListeners = {};
+
+  function subscribeStudentUnavailable(studentId) {
+    if (studentUnavailListeners[studentId]) return;
+    const unsub = onSnapshot(collection(db, 'users', state.user.uid, 'students', studentId, 'unavailableDates'), (snap) => {
+      studentUnavailableMap[studentId] = snap.docs.map((d) => d.data());
+      draw();
+    });
+    studentUnavailListeners[studentId] = unsub;
+    state.unsubs.push(unsub);
+  }
+  function unsubscribeStudentUnavailable(studentId) {
+    if (studentUnavailListeners[studentId]) {
+      studentUnavailListeners[studentId]();
+      delete studentUnavailListeners[studentId];
+      delete studentUnavailableMap[studentId];
+    }
+  }
 
   function draw() {
     const box = document.getElementById('calendar-content');
@@ -846,10 +885,27 @@ function renderTeacherCalendarTab() {
         students
           .filter((s) => s.recurringSlot && s.recurringSlot.dayOfWeek === dow)
           .sort((a, b) => a.recurringSlot.startTime.localeCompare(b.recurringSlot.startTime))
-          .forEach((s) => blocks.push({ type: 'lesson', color: colorForStudent(s.id), label: `${formatTime12(s.recurringSlot.startTime)} ${s.name}` }));
+          .forEach((s) => {
+            const firstName = (s.name || '').split(' ')[0];
+            const lessonStartMin = timeToMinutes(s.recurringSlot.startTime);
+            const lessonEndMin = lessonStartMin + (s.recurringSlot.durationMinutes || 30);
+            const conflict = (studentUnavailableMap[s.id] || [])
+              .filter((u) => u.date === iso)
+              .some((u) => rangesOverlap(lessonStartMin, lessonEndMin, timeToMinutes(u.startTime), timeToMinutes(u.endTime)));
+            blocks.push({
+              type: 'lesson', color: colorForStudent(s.id), conflict,
+              label: `${conflict ? '⚠ ' : ''}${formatTimeCompact(s.recurringSlot.startTime)} ${firstName}`
+            });
+          });
+        students.forEach((s) => {
+          const firstName = (s.name || '').split(' ')[0];
+          (studentUnavailableMap[s.id] || []).filter((u) => u.date === iso).forEach((u) => {
+            blocks.push({ type: 'student-unavailable', label: `${firstName} out ${formatTimeCompact(u.startTime)}–${formatTimeCompact(u.endTime)}` });
+          });
+        });
       }
       unavailableBlocks.filter((b) => b.date === iso)
-        .forEach((b) => blocks.push({ type: 'unavailable', label: `${formatTime12(b.startTime)}–${formatTime12(b.endTime)}` }));
+        .forEach((b) => blocks.push({ type: 'unavailable', label: `${formatTimeCompact(b.startTime)}–${formatTimeCompact(b.endTime)}` }));
       return blocks;
     }
     function dotsForDate(d) {
@@ -858,6 +914,7 @@ function renderTeacherCalendarTab() {
       const dots = [];
       if (ws.activeDays.includes(dow)) {
         students.filter((s) => s.recurringSlot && s.recurringSlot.dayOfWeek === dow).forEach((s) => dots.push(colorForStudent(s.id)));
+        students.forEach((s) => { if ((studentUnavailableMap[s.id] || []).some((u) => u.date === iso)) dots.push('#C48E93'); });
       }
       if (unavailableBlocks.some((b) => b.date === iso)) dots.push('#9aa0a8');
       return dots;
@@ -865,14 +922,19 @@ function renderTeacherCalendarTab() {
 
     box.innerHTML = calendarToolbarHtml() + `
       <div class="calendar-legend">
-        <span><span class="legend-dot" style="background:${STUDENT_COLORS[0]};"></span>Lesson blocks (colored per student)</span>
+        <span><span class="legend-dot" style="background:${STUDENT_COLORS[0]};"></span>Lesson (per student)</span>
+        <span><span class="legend-dot" style="background:#C48E93;"></span>Student unavailable</span>
         <span><span class="legend-dot" style="background:#9aa0a8;"></span>You're unavailable</span>
+        <span><span class="legend-dot" style="background:transparent; border:2px solid #A94438;"></span>⚠ Conflict</span>
       </div>
       ${state.calendarView === 'week' ? weekGridHtml(blocksForDate) : monthGridHtml(dotsForDate)}`;
   }
 
   const unsubStudents = onSnapshot(collection(db, 'users', state.user.uid, 'students'), (snap) => {
     students = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const currentIds = new Set(students.map((s) => s.id));
+    students.forEach((s) => subscribeStudentUnavailable(s.id));
+    Object.keys(studentUnavailListeners).forEach((id) => { if (!currentIds.has(id)) unsubscribeStudentUnavailable(id); });
     draw();
   });
   const unsubUnavail = onSnapshot(collection(db, 'users', state.user.uid, 'unavailableBlocks'), (snap) => {
@@ -919,16 +981,16 @@ function renderStudentCalendarTab() {
       const iso = isoDate(d);
       const blocks = [];
       if (myStudentDoc.recurringSlot && myStudentDoc.recurringSlot.dayOfWeek === dow) {
-        blocks.push({ type: 'lesson', color: '#8C6D3F', label: `${formatTime12(myStudentDoc.recurringSlot.startTime)} My lesson` });
+        blocks.push({ type: 'lesson', color: '#8C6D3F', label: `${formatTimeCompact(myStudentDoc.recurringSlot.startTime)} Lesson` });
       }
       const freeSlots = candidates
         .filter((s) => s.dayOfWeek === dow && !isTakenByAnyone(s.dayOfWeek, s.startTime))
         .sort((a, b) => a.startTime.localeCompare(b.startTime));
       const slotLen = (weeklySchedule && weeklySchedule.slotLengthMinutes) || 30;
       mergeFreeRanges(freeSlots, slotLen)
-        .forEach((r) => blocks.push({ type: 'free', label: `${formatTime12(r.startTime)}–${formatTime12(r.endTime)} Free` }));
+        .forEach((r) => blocks.push({ type: 'free', label: `${formatTimeCompact(r.startTime)}–${formatTimeCompact(r.endTime)}` }));
       unavailableBlocks.filter((b) => b.date === iso)
-        .forEach((b) => blocks.push({ type: 'unavailable', label: `${formatTime12(b.startTime)}–${formatTime12(b.endTime)}` }));
+        .forEach((b) => blocks.push({ type: 'unavailable', label: `${formatTimeCompact(b.startTime)}–${formatTimeCompact(b.endTime)}` }));
       return blocks;
     }
     function dotsForDate(d) {
