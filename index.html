@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Flute Lesson Scheduler</title>
+<link rel="icon" href="logo.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -32,6 +33,7 @@
   .mono { font-family: 'IBM Plex Mono', monospace; }
   .staff { width: 56px; height: 18px; margin: 10px auto 0; }
   .staff line { stroke: var(--brass); stroke-width: 1; }
+  .app-logo { width: 128px; height: 128px; object-fit: cover; border-radius: 20px; box-shadow: var(--shadow); border: 1px solid var(--rule-light); margin-bottom: 4px; }
   .center { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 24px; gap: 4px; text-align: center; }
   .app-shell { max-width: 430px; margin: 0 auto; padding: 28px 20px 60px; min-height: 100vh; }
 
@@ -707,6 +709,7 @@ function render() {
 function renderLogin() {
   el.innerHTML = `
     <div class="center">
+      <img src="logo.png" alt="" class="app-logo" />
       <h1 class="display">Flute Lesson Scheduler</h1>
       ${staffSvg()}
       <p style="color:var(--ink-soft); margin:18px 0 22px; max-width:280px;">
