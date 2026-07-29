@@ -176,8 +176,8 @@
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {
-  getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged,
-  deleteUser, reauthenticateWithRedirect
+  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged,
+  deleteUser, reauthenticateWithPopup
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection,
@@ -387,23 +387,12 @@ function rangesOverlap(aStartMin, aEndMin, bStartMin, bEndMin) {
 }
 
 // ---------- Auth wiring ----------
-getRedirectResult(auth).catch((err) => {
-  console.error('Sign-in redirect error:', err);
-});
-
 onAuthStateChanged(auth, async (firebaseUser) => {
   clearUnsubs();
   if (!firebaseUser) {
     state.user = null; state.profile = null; state.loading = false;
     render();
     return;
-  }
-  // If we redirected away to re-confirm identity mid account-deletion,
-  // finish that deletion now instead of loading the account normally.
-  if (sessionStorage.getItem('pendingAccountDeletion') === '1') {
-    sessionStorage.removeItem('pendingAccountDeletion');
-    try { await deleteUser(firebaseUser); } catch (err) { /* best effort */ }
-    return; // onAuthStateChanged fires again with null once deletion completes
   }
   state.user = firebaseUser;
   const ref = doc(db, 'users', firebaseUser.uid);
@@ -422,7 +411,13 @@ onAuthStateChanged(auth, async (firebaseUser) => {
   render();
 });
 
-window.login = () => signInWithRedirect(auth, googleProvider);
+window.login = async () => {
+  await signInWithPopup(auth, googleProvider);
+  // Firebase's popup sign-in doesn't always reliably notify this tab that
+  // it finished, which can leave the UI showing empty sections until a
+  // manual refresh. Reloading here does that refresh automatically.
+  location.reload();
+};
 window.logout = () => signOut(auth);
 
 // ---------- Connection helpers ----------
@@ -598,10 +593,8 @@ async function deleteAccount() {
     await deleteUser(auth.currentUser);
   } catch (err) {
     if (err.code === 'auth/requires-recent-login') {
-      sessionStorage.setItem('pendingAccountDeletion', '1');
-      await reauthenticateWithRedirect(auth.currentUser, googleProvider);
-      // Page navigates away here — completion happens in onAuthStateChanged
-      // after the redirect brings the user back.
+      await reauthenticateWithPopup(auth.currentUser, googleProvider);
+      await deleteUser(auth.currentUser);
     } else {
       throw err;
     }
