@@ -149,6 +149,16 @@
   .calendar-month-cell.today { border-color: var(--brass-deep); }
   .calendar-month-daynum { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--ink-soft); margin-bottom: 3px; }
   .calendar-month-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin: 1px; }
+
+  .day-detail-overlay { position: fixed; inset: 0; background: rgba(20, 22, 26, 0.4); z-index: 42; }
+  .day-detail-panel {
+    position: fixed; left: 16px; right: 16px; bottom: 16px; max-width: 400px; margin: 0 auto;
+    max-height: 70vh; overflow-y: auto; background: var(--paper-raised); border-radius: 14px;
+    box-shadow: 0 10px 36px rgba(0,0,0,0.28); z-index: 43; padding: 18px;
+  }
+  .day-detail-panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .day-detail-event { padding: 9px 0; border-bottom: 1px solid var(--rule-light); font-size: 14px; }
+  .day-detail-event:last-child { border-bottom: none; }
 </style>
 </head>
 <body>
@@ -802,14 +812,15 @@ function calendarToolbarHtml() {
     </div>`;
 }
 
-function weekGridHtml(getBlocksForDate) {
+function weekGridHtml(getBlocksForDate, onDayClick) {
   const today = new Date();
   let html = '<div class="calendar-week-grid">';
   for (let i = 0; i < 7; i++) {
     const d = addDays(state.calendarWeekStart, i);
     const blocks = getBlocksForDate(d);
+    const clickAttr = onDayClick ? ` onclick="${onDayClick(d)}" style="cursor:pointer;"` : '';
     html += `
-      <div class="calendar-day-col ${isSameDate(d, today) ? 'today' : ''}">
+      <div class="calendar-day-col ${isSameDate(d, today) ? 'today' : ''}"${clickAttr}>
         <div class="calendar-day-header">${DAY_LETTERS[d.getDay()]}<b>${d.getMonth() + 1}/${d.getDate()}</b></div>
         ${blocks.map((b) => {
           const typeClass = b.type === 'unavailable' ? 'unavailable' : (b.type === 'free' ? 'free' : (b.type === 'student-unavailable' ? 'student-unavailable' : ''));
@@ -820,6 +831,13 @@ function weekGridHtml(getBlocksForDate) {
   html += '</div>';
   return html;
 }
+
+window.calGoToWeekOf = function (iso) {
+  const d = new Date(iso + 'T00:00:00');
+  state.calendarWeekStart = startOfWeek(d);
+  state.calendarView = 'week';
+  render();
+};
 
 function monthGridHtml(getDotsForDate) {
   const anchor = state.calendarMonthAnchor;
@@ -832,7 +850,7 @@ function monthGridHtml(getDotsForDate) {
     const inMonth = d.getMonth() === anchor.getMonth();
     const dots = getDotsForDate(d);
     html += `
-      <div class="calendar-month-cell ${inMonth ? '' : 'other-month'} ${isSameDate(d, today) ? 'today' : ''}">
+      <div class="calendar-month-cell ${inMonth ? '' : 'other-month'} ${isSameDate(d, today) ? 'today' : ''}" style="cursor:pointer;" onclick="window.calGoToWeekOf('${isoDate(d)}')">
         <div class="calendar-month-daynum">${d.getDate()}</div>
         <div>${dots.map((c) => `<span class="calendar-month-dot" style="background:${c};"></span>`).join('')}</div>
       </div>`;
@@ -854,6 +872,7 @@ function renderTeacherCalendarTab() {
   let unavailableBlocks = [];
   let studentUnavailableMap = {};
   let studentUnavailListeners = {};
+  let expandedDate = null;
 
   function subscribeStudentUnavailable(studentId) {
     if (studentUnavailListeners[studentId]) return;
@@ -872,12 +891,15 @@ function renderTeacherCalendarTab() {
     }
   }
 
+  window.openDayDetail = function (iso) { expandedDate = iso; draw(); };
+  window.closeDayDetail = function () { expandedDate = null; draw(); };
+
   function draw() {
     const box = document.getElementById('calendar-content');
     if (!box) return;
     const ws = state.profile.weeklySchedule || { activeDays: [] };
 
-    function blocksForDate(d) {
+    function blocksForDate(d, verbose) {
       const dow = d.getDay();
       const iso = isoDate(d);
       const blocks = [];
@@ -888,24 +910,32 @@ function renderTeacherCalendarTab() {
           .forEach((s) => {
             const firstName = (s.name || '').split(' ')[0];
             const lessonStartMin = timeToMinutes(s.recurringSlot.startTime);
-            const lessonEndMin = lessonStartMin + (s.recurringSlot.durationMinutes || 30);
+            const durationMin = s.recurringSlot.durationMinutes || 30;
+            const lessonEndMin = lessonStartMin + durationMin;
             const conflict = (studentUnavailableMap[s.id] || [])
               .filter((u) => u.date === iso)
               .some((u) => rangesOverlap(lessonStartMin, lessonEndMin, timeToMinutes(u.startTime), timeToMinutes(u.endTime)));
-            blocks.push({
-              type: 'lesson', color: colorForStudent(s.id), conflict,
-              label: `${conflict ? '⚠ ' : ''}${formatTimeCompact(s.recurringSlot.startTime)} ${firstName}`
-            });
+            const label = verbose
+              ? `${conflict ? '⚠ Conflict — ' : ''}Lesson with ${s.name}, ${formatTime12(s.recurringSlot.startTime)}–${formatTime12(minutesToTime(lessonEndMin))}`
+              : `${conflict ? '⚠ ' : ''}${formatTimeCompact(s.recurringSlot.startTime)} ${firstName}`;
+            blocks.push({ type: 'lesson', color: colorForStudent(s.id), conflict, label });
           });
         students.forEach((s) => {
           const firstName = (s.name || '').split(' ')[0];
           (studentUnavailableMap[s.id] || []).filter((u) => u.date === iso).forEach((u) => {
-            blocks.push({ type: 'student-unavailable', label: `${firstName} out ${formatTimeCompact(u.startTime)}–${formatTimeCompact(u.endTime)}` });
+            const label = verbose
+              ? `${s.name} unavailable, ${formatTime12(u.startTime)}–${formatTime12(u.endTime)}`
+              : `${firstName} out ${formatTimeCompact(u.startTime)}–${formatTimeCompact(u.endTime)}`;
+            blocks.push({ type: 'student-unavailable', label });
           });
         });
       }
-      unavailableBlocks.filter((b) => b.date === iso)
-        .forEach((b) => blocks.push({ type: 'unavailable', label: `${formatTimeCompact(b.startTime)}–${formatTimeCompact(b.endTime)}` }));
+      unavailableBlocks.filter((b) => b.date === iso).forEach((b) => {
+        const label = verbose
+          ? `You're unavailable, ${formatTime12(b.startTime)}–${formatTime12(b.endTime)}`
+          : `${formatTimeCompact(b.startTime)}–${formatTimeCompact(b.endTime)}`;
+        blocks.push({ type: 'unavailable', label });
+      });
       return blocks;
     }
     function dotsForDate(d) {
@@ -919,6 +949,19 @@ function renderTeacherCalendarTab() {
       if (unavailableBlocks.some((b) => b.date === iso)) dots.push('#9aa0a8');
       return dots;
     }
+    function dayDetailHtml(iso) {
+      const d = new Date(iso + 'T00:00:00');
+      const blocksFull = blocksForDate(d, true);
+      return `
+        <div class="day-detail-overlay" onclick="window.closeDayDetail()"></div>
+        <div class="day-detail-panel">
+          <div class="day-detail-panel-header">
+            <h2 class="display" style="font-size:18px;">${d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</h2>
+            <button class="ghost" onclick="window.closeDayDetail()">Close</button>
+          </div>
+          ${blocksFull.length === 0 ? '<p>No events.</p>' : blocksFull.map((b) => `<div class="day-detail-event">${b.label}</div>`).join('')}
+        </div>`;
+    }
 
     box.innerHTML = calendarToolbarHtml() + `
       <div class="calendar-legend">
@@ -927,7 +970,10 @@ function renderTeacherCalendarTab() {
         <span><span class="legend-dot" style="background:#9aa0a8;"></span>You're unavailable</span>
         <span><span class="legend-dot" style="background:transparent; border:2px solid #A94438;"></span>⚠ Conflict</span>
       </div>
-      ${state.calendarView === 'week' ? weekGridHtml(blocksForDate) : monthGridHtml(dotsForDate)}`;
+      ${state.calendarView === 'week'
+        ? weekGridHtml((d) => blocksForDate(d, false), (d) => `window.openDayDetail('${isoDate(d)}')`)
+        : monthGridHtml(dotsForDate)}
+      ${expandedDate ? dayDetailHtml(expandedDate) : ''}`;
   }
 
   const unsubStudents = onSnapshot(collection(db, 'users', state.user.uid, 'students'), (snap) => {
