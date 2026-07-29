@@ -119,6 +119,34 @@
   .theme-swatch:hover { background: var(--rule-light); }
   .theme-swatch.active { border-color: var(--brass-deep); background: var(--rule-light); }
   .theme-dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+
+  .calendar-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .calendar-nav { display: flex; align-items: center; gap: 6px; }
+  .calendar-nav-btn { width: 32px; height: 32px; padding: 0; border-radius: 8px; background: var(--paper-raised); color: var(--ink); border: 1px solid var(--rule); font-size: 14px; }
+  .calendar-nav-btn:hover { background: var(--rule-light); }
+  .calendar-range-label { font-family: 'Fraunces', serif; font-size: 16px; font-weight: 500; min-width: 130px; text-align: center; }
+  .calendar-view-toggle { display: flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+  .calendar-view-toggle button { border-radius: 0; padding: 7px 12px; font-size: 12px; background: var(--paper-raised); color: var(--ink-soft); }
+  .calendar-view-toggle button.active { background: var(--brass-deep); color: #FFF9EF; }
+  .calendar-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink-soft); margin-bottom: 14px; }
+  .calendar-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  .calendar-week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+  .calendar-day-col { background: var(--paper-raised); border: 1px solid var(--rule-light); border-radius: 10px; padding: 8px 6px; min-height: 90px; }
+  .calendar-day-col.today { border-color: var(--brass-deep); }
+  .calendar-day-header { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--ink-soft); text-align: center; margin-bottom: 6px; }
+  .calendar-day-header b { display: block; color: var(--ink); font-size: 13px; }
+  .calendar-block { border-radius: 6px; padding: 4px 6px; font-size: 10.5px; line-height: 1.3; margin-bottom: 4px; color: #fff; }
+  .calendar-block.unavailable { background: #9aa0a8; color: #fff; }
+  .calendar-block.free { background: transparent; border: 1px dashed var(--sage); color: var(--sage); }
+
+  .calendar-month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .calendar-month-cell { background: var(--paper-raised); border: 1px solid var(--rule-light); border-radius: 8px; padding: 5px; min-height: 62px; font-size: 10px; }
+  .calendar-month-cell.other-month { opacity: 0.35; }
+  .calendar-month-cell.today { border-color: var(--brass-deep); }
+  .calendar-month-daynum { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--ink-soft); margin-bottom: 3px; }
+  .calendar-month-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin: 1px; }
 </style>
 </head>
 <body>
@@ -154,11 +182,13 @@ const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const DAY_LETTERS = ['S','M','T','W','T','F','S'];
 const FULL_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const TEACHER_TABS = [
+  { id: 'calendar', label: 'Calendar' },
   { id: 'students', label: 'Students' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'settings', label: 'Settings' }
 ];
 const STUDENT_TABS = [
+  { id: 'calendar', label: 'Calendar' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'settings', label: 'Settings' }
 ];
@@ -167,12 +197,14 @@ const THEMES = [
   { id: 'slate', label: 'Slate', dot: '#3D6E91' },
   { id: 'forest', label: 'Forest', dot: '#6E8C3F' }
 ];
+const STUDENT_COLORS = ['#8C6D3F', '#3D6E91', '#6E8C3F', '#8B5FA0', '#B0555A', '#4E8C7A', '#A0763F'];
 
 const el = document.getElementById('app');
 
 let state = {
   user: null, profile: null, loading: true, unsubs: [],
-  teacherViewingStudent: null, activeTab: null, drawerOpen: false
+  teacherViewingStudent: null, activeTab: null, drawerOpen: false,
+  calendarView: 'week', calendarWeekStart: null, calendarMonthAnchor: null
 };
 
 function clearUnsubs() {
@@ -269,6 +301,27 @@ function generateCandidateSlots(weeklySchedule) {
     }
   }
   return slots;
+}
+
+// ---------- Calendar helpers ----------
+function startOfWeek(d) {
+  const copy = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  copy.setDate(copy.getDate() - copy.getDay());
+  return copy;
+}
+function addDays(d, n) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+}
+function isoDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function isSameDate(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+function colorForStudent(studentId) {
+  let hash = 0;
+  for (let i = 0; i < studentId.length; i++) hash = (hash * 31 + studentId.charCodeAt(i)) % STUDENT_COLORS.length;
+  return STUDENT_COLORS[Math.abs(hash)];
 }
 
 // ---------- Auth wiring ----------
@@ -539,19 +592,23 @@ function render() {
   if (state.loading) { el.innerHTML = `<div class="center">Loading…</div>`; return; }
   if (!state.user) { renderLogin(); return; }
   if (!state.profile?.role) { renderChooseRole(); return; }
+  if (!state.calendarWeekStart) state.calendarWeekStart = startOfWeek(new Date());
+  if (!state.calendarMonthAnchor) { const t = new Date(); state.calendarMonthAnchor = new Date(t.getFullYear(), t.getMonth(), 1); }
 
   if (state.profile.role === 'teacher') {
     if (state.teacherViewingStudent) { renderStudentDetailView(); return; }
-    if (!TEACHER_TABS.some((t) => t.id === state.activeTab)) state.activeTab = 'students';
+    if (!TEACHER_TABS.some((t) => t.id === state.activeTab)) state.activeTab = 'calendar';
+    if (state.activeTab === 'students') { renderTeacherStudentsTab(); return; }
     if (state.activeTab === 'schedule') { renderTeacherScheduleTab(); return; }
     if (state.activeTab === 'settings') { renderSettingsTab(); return; }
-    renderTeacherStudentsTab();
+    renderTeacherCalendarTab();
     return;
   }
 
-  if (!STUDENT_TABS.some((t) => t.id === state.activeTab)) state.activeTab = 'schedule';
+  if (!STUDENT_TABS.some((t) => t.id === state.activeTab)) state.activeTab = 'calendar';
+  if (state.activeTab === 'schedule') { renderStudentScheduleTab(); return; }
   if (state.activeTab === 'settings') { renderSettingsTab(); return; }
-  renderStudentScheduleTab();
+  renderStudentCalendarTab();
 }
 
 function renderLogin() {
@@ -660,6 +717,230 @@ window.confirmIncoming = async function (request) {
 window.declineIncoming = async function (requestId) {
   await rejectConnectionRequest(requestId);
 };
+
+// ---------- Calendar (shared toolbar/grid, teacher and student views) ----------
+window.calPrevWeek = function () { state.calendarWeekStart = addDays(state.calendarWeekStart, -7); render(); };
+window.calNextWeek = function () { state.calendarWeekStart = addDays(state.calendarWeekStart, 7); render(); };
+window.calPrevMonth = function () {
+  const a = state.calendarMonthAnchor;
+  state.calendarMonthAnchor = new Date(a.getFullYear(), a.getMonth() - 1, 1);
+  render();
+};
+window.calNextMonth = function () {
+  const a = state.calendarMonthAnchor;
+  state.calendarMonthAnchor = new Date(a.getFullYear(), a.getMonth() + 1, 1);
+  render();
+};
+window.calToday = function () {
+  state.calendarWeekStart = startOfWeek(new Date());
+  const t = new Date();
+  state.calendarMonthAnchor = new Date(t.getFullYear(), t.getMonth(), 1);
+  render();
+};
+window.calSetView = function (view) { state.calendarView = view; render(); };
+
+function calendarToolbarHtml() {
+  const weekEnd = addDays(state.calendarWeekStart, 6);
+  const rangeLabel = state.calendarView === 'week'
+    ? `${state.calendarWeekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+    : state.calendarMonthAnchor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  return `
+    <div class="calendar-toolbar">
+      <div class="calendar-nav">
+        <button class="calendar-nav-btn" onclick="window.${state.calendarView === 'week' ? 'calPrevWeek' : 'calPrevMonth'}()">‹</button>
+        <span class="calendar-range-label">${rangeLabel}</span>
+        <button class="calendar-nav-btn" onclick="window.${state.calendarView === 'week' ? 'calNextWeek' : 'calNextMonth'}()">›</button>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button class="ghost" style="padding:6px 10px; font-size:12px;" onclick="window.calToday()">Today</button>
+        <div class="calendar-view-toggle">
+          <button class="${state.calendarView === 'week' ? 'active' : ''}" onclick="window.calSetView('week')">Week</button>
+          <button class="${state.calendarView === 'month' ? 'active' : ''}" onclick="window.calSetView('month')">Month</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function weekGridHtml(getBlocksForDate) {
+  const today = new Date();
+  let html = '<div class="calendar-week-grid">';
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(state.calendarWeekStart, i);
+    const blocks = getBlocksForDate(d);
+    html += `
+      <div class="calendar-day-col ${isSameDate(d, today) ? 'today' : ''}">
+        <div class="calendar-day-header">${DAY_LETTERS[d.getDay()]}<b>${d.getMonth() + 1}/${d.getDate()}</b></div>
+        ${blocks.map((b) => `<div class="calendar-block ${b.type === 'unavailable' ? 'unavailable' : (b.type === 'free' ? 'free' : '')}" style="${b.type === 'lesson' ? `background:${b.color};` : ''}">${b.label}</div>`).join('')}
+      </div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+function monthGridHtml(getDotsForDate) {
+  const anchor = state.calendarMonthAnchor;
+  const firstOfMonth = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const gridStart = startOfWeek(firstOfMonth);
+  const today = new Date();
+  let html = '<div class="calendar-month-grid">';
+  for (let i = 0; i < 42; i++) {
+    const d = addDays(gridStart, i);
+    const inMonth = d.getMonth() === anchor.getMonth();
+    const dots = getDotsForDate(d);
+    html += `
+      <div class="calendar-month-cell ${inMonth ? '' : 'other-month'} ${isSameDate(d, today) ? 'today' : ''}">
+        <div class="calendar-month-daynum">${d.getDate()}</div>
+        <div>${dots.map((c) => `<span class="calendar-month-dot" style="background:${c};"></span>`).join('')}</div>
+      </div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+// ---------- Teacher: Calendar tab ----------
+function renderTeacherCalendarTab() {
+  el.innerHTML = `
+    <div class="app-shell">
+      ${topbarHtml('Calendar')}
+      ${renderDrawer()}
+      <div id="calendar-content"><p>Loading…</p></div>
+    </div>`;
+
+  let students = [];
+  let unavailableBlocks = [];
+
+  function draw() {
+    const box = document.getElementById('calendar-content');
+    if (!box) return;
+    const ws = state.profile.weeklySchedule || { activeDays: [] };
+
+    function blocksForDate(d) {
+      const dow = d.getDay();
+      const iso = isoDate(d);
+      const blocks = [];
+      if (ws.activeDays.includes(dow)) {
+        students
+          .filter((s) => s.recurringSlot && s.recurringSlot.dayOfWeek === dow)
+          .sort((a, b) => a.recurringSlot.startTime.localeCompare(b.recurringSlot.startTime))
+          .forEach((s) => blocks.push({ type: 'lesson', color: colorForStudent(s.id), label: `${formatTime12(s.recurringSlot.startTime)} ${s.name}` }));
+      }
+      unavailableBlocks.filter((b) => b.date === iso)
+        .forEach((b) => blocks.push({ type: 'unavailable', label: `${formatTime12(b.startTime)}–${formatTime12(b.endTime)}` }));
+      return blocks;
+    }
+    function dotsForDate(d) {
+      const dow = d.getDay();
+      const iso = isoDate(d);
+      const dots = [];
+      if (ws.activeDays.includes(dow)) {
+        students.filter((s) => s.recurringSlot && s.recurringSlot.dayOfWeek === dow).forEach((s) => dots.push(colorForStudent(s.id)));
+      }
+      if (unavailableBlocks.some((b) => b.date === iso)) dots.push('#9aa0a8');
+      return dots;
+    }
+
+    box.innerHTML = calendarToolbarHtml() + `
+      <div class="calendar-legend">
+        <span><span class="legend-dot" style="background:${STUDENT_COLORS[0]};"></span>Lesson blocks (colored per student)</span>
+        <span><span class="legend-dot" style="background:#9aa0a8;"></span>You're unavailable</span>
+      </div>
+      ${state.calendarView === 'week' ? weekGridHtml(blocksForDate) : monthGridHtml(dotsForDate)}`;
+  }
+
+  const unsubStudents = onSnapshot(collection(db, 'users', state.user.uid, 'students'), (snap) => {
+    students = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    draw();
+  });
+  const unsubUnavail = onSnapshot(collection(db, 'users', state.user.uid, 'unavailableBlocks'), (snap) => {
+    unavailableBlocks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    draw();
+  });
+
+  draw();
+  state.unsubs.push(unsubStudents, unsubUnavail);
+}
+
+// ---------- Student: Calendar tab ----------
+function renderStudentCalendarTab() {
+  el.innerHTML = `
+    <div class="app-shell">
+      ${topbarHtml('Calendar')}
+      ${renderDrawer()}
+      <div id="calendar-content"><p>Loading…</p></div>
+    </div>`;
+
+  if (!state.profile.teacherId) {
+    document.getElementById('calendar-content').innerHTML = '<p>Connect with your teacher first to see your calendar.</p>';
+    return;
+  }
+
+  const teacherId = state.profile.teacherId;
+  const uid = state.user.uid;
+  let myStudentDoc = { recurringSlot: null };
+  let allStudents = [];
+  let weeklySchedule = null;
+  let unavailableBlocks = [];
+
+  function isTakenByAnyone(dayOfWeek, startTime) {
+    return allStudents.some((s) => s.recurringSlot && s.recurringSlot.dayOfWeek === dayOfWeek && s.recurringSlot.startTime === startTime);
+  }
+
+  function draw() {
+    const box = document.getElementById('calendar-content');
+    if (!box) return;
+    const candidates = generateCandidateSlots(weeklySchedule);
+
+    function blocksForDate(d) {
+      const dow = d.getDay();
+      const iso = isoDate(d);
+      const blocks = [];
+      if (myStudentDoc.recurringSlot && myStudentDoc.recurringSlot.dayOfWeek === dow) {
+        blocks.push({ type: 'lesson', color: '#8C6D3F', label: `${formatTime12(myStudentDoc.recurringSlot.startTime)} My lesson` });
+      }
+      candidates.filter((s) => s.dayOfWeek === dow && !isTakenByAnyone(s.dayOfWeek, s.startTime))
+        .forEach((s) => blocks.push({ type: 'free', label: `${formatTime12(s.startTime)} Free` }));
+      unavailableBlocks.filter((b) => b.date === iso)
+        .forEach((b) => blocks.push({ type: 'unavailable', label: `${formatTime12(b.startTime)}–${formatTime12(b.endTime)}` }));
+      return blocks;
+    }
+    function dotsForDate(d) {
+      const dow = d.getDay();
+      const iso = isoDate(d);
+      const dots = [];
+      if (myStudentDoc.recurringSlot && myStudentDoc.recurringSlot.dayOfWeek === dow) dots.push('#8C6D3F');
+      if (unavailableBlocks.some((b) => b.date === iso)) dots.push('#9aa0a8');
+      return dots;
+    }
+
+    box.innerHTML = calendarToolbarHtml() + `
+      <div class="calendar-legend">
+        <span><span class="legend-dot" style="background:#8C6D3F;"></span>My lesson</span>
+        <span><span class="legend-dot" style="background:transparent; border:1px dashed var(--sage);"></span>Teacher free</span>
+        <span><span class="legend-dot" style="background:#9aa0a8;"></span>Teacher unavailable</span>
+      </div>
+      ${state.calendarView === 'week' ? weekGridHtml(blocksForDate) : monthGridHtml(dotsForDate)}`;
+  }
+
+  const unsubMyDoc = onSnapshot(doc(db, 'users', teacherId, 'students', uid), (snap) => {
+    myStudentDoc = snap.exists() ? { recurringSlot: null, ...snap.data() } : myStudentDoc;
+    draw();
+  });
+  const unsubAllStudents = onSnapshot(collection(db, 'users', teacherId, 'students'), (snap) => {
+    allStudents = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    draw();
+  });
+  const unsubTeacherDoc = onSnapshot(doc(db, 'users', teacherId), (snap) => {
+    weeklySchedule = snap.exists() ? snap.data().weeklySchedule : null;
+    draw();
+  });
+  const unsubUnavail = onSnapshot(collection(db, 'users', teacherId, 'unavailableBlocks'), (snap) => {
+    unavailableBlocks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    draw();
+  });
+
+  draw();
+  state.unsubs.push(unsubMyDoc, unsubAllStudents, unsubTeacherDoc, unsubUnavail);
+}
 
 // ---------- Teacher: Students tab ----------
 function renderTeacherStudentsTab() {
