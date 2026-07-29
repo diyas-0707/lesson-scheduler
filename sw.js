@@ -4,8 +4,18 @@
 // network. A caching service worker caused serious stale-content problems
 // earlier in this project's history, so this trades offline support for
 // reliability: you'll always see the latest deployed version.
+//
+// Critically: it never touches navigation requests (full page loads).
+// Intercepting those caused the Google sign-in redirect to fail — any
+// hiccup in the passthrough fetch turned into a hard "failed to fetch"
+// right as the browser tried to reload the page after returning from
+// Google. Skipping navigations entirely removes that risk while still
+// satisfying the "has a fetch handler" requirement for installability.
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 self.addEventListener('fetch', (event) => {
-  event.respondWith(fetch(event.request));
+  if (event.request.mode === 'navigate') return;
+  event.respondWith(
+    fetch(event.request).catch(() => new Response('', { status: 504, statusText: 'Offline' }))
+  );
 });
