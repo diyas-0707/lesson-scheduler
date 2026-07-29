@@ -7,19 +7,25 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --paper: #F5F1E8;
-    --paper-raised: #FBF9F4;
-    --ink: #22252B;
-    --ink-soft: #5A5E67;
-    --brass: #B8935A;
-    --brass-deep: #8C6D3F;
-    --slate: #4B5C78;
-    --sage: #5F8562;
-    --rule: rgba(34, 37, 43, 0.14);
-    --rule-light: rgba(34, 37, 43, 0.08);
+  :root, html[data-theme="manuscript"] {
+    --paper: #F5F1E8; --paper-raised: #FBF9F4; --ink: #22252B; --ink-soft: #5A5E67;
+    --brass: #B8935A; --brass-deep: #8C6D3F; --slate: #4B5C78; --sage: #5F8562;
+    --rule: rgba(34, 37, 43, 0.14); --rule-light: rgba(34, 37, 43, 0.08);
     --shadow: 0 1px 2px rgba(34,37,43,0.06), 0 8px 24px rgba(34,37,43,0.05);
   }
+  html[data-theme="slate"] {
+    --paper: #EAEEF3; --paper-raised: #F6F8FA; --ink: #1E2733; --ink-soft: #56626F;
+    --brass: #3D6E91; --brass-deep: #2A4E68; --slate: #6B5B95; --sage: #3F7A6B;
+    --rule: rgba(30, 39, 51, 0.14); --rule-light: rgba(30, 39, 51, 0.08);
+    --shadow: 0 1px 2px rgba(30,39,51,0.06), 0 8px 24px rgba(30,39,51,0.05);
+  }
+  html[data-theme="forest"] {
+    --paper: #EEF2E7; --paper-raised: #F8FAF4; --ink: #242A1E; --ink-soft: #5B6350;
+    --brass: #6E8C3F; --brass-deep: #4E682C; --slate: #3F6B5C; --sage: #8B7B3E;
+    --rule: rgba(36, 42, 30, 0.14); --rule-light: rgba(36, 42, 30, 0.08);
+    --shadow: 0 1px 2px rgba(36,42,30,0.06), 0 8px 24px rgba(36,42,30,0.05);
+  }
+
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--paper); color: var(--ink); font-family: 'Public Sans', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
   h1, h2, .display { font-family: 'Fraunces', Georgia, serif; font-weight: 500; letter-spacing: -0.01em; margin: 0; }
@@ -28,8 +34,30 @@
   .staff line { stroke: var(--brass); stroke-width: 1; }
   .center { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 24px; gap: 4px; text-align: center; }
   .app-shell { max-width: 430px; margin: 0 auto; padding: 28px 20px 60px; min-height: 100vh; }
-  header.page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 28px; }
-  header.page-header h1 { font-size: 26px; }
+
+  .topbar { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+  .topbar h1 { font-size: 24px; }
+  .hamburger-btn {
+    background: transparent; border: 1px solid var(--rule); border-radius: 8px;
+    width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--ink); font-size: 16px; flex-shrink: 0;
+  }
+  .hamburger-btn:hover { background: var(--rule-light); }
+
+  .drawer-overlay { position: fixed; inset: 0; background: rgba(20, 22, 26, 0.4); z-index: 40; }
+  .drawer-panel {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 230px; background: var(--paper-raised);
+    box-shadow: 6px 0 28px rgba(0,0,0,0.18); z-index: 41; padding: 18px 14px; display: flex; flex-direction: column; gap: 4px;
+  }
+  .drawer-panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--brass-deep); margin: 4px 0 12px; }
+  .drawer-close { align-self: flex-end; background: transparent; border: none; color: var(--ink-soft); font-size: 18px; padding: 4px 8px; margin-bottom: 4px; }
+  .drawer-tab {
+    text-align: left; background: transparent; border: none; padding: 11px 12px; border-radius: 8px;
+    color: var(--ink); font-family: 'Public Sans', sans-serif; font-weight: 600; font-size: 14px;
+  }
+  .drawer-tab:hover { background: var(--rule-light); }
+  .drawer-tab.active { background: var(--brass-deep); color: #FFF9EF; }
+
   button { cursor: pointer; border: none; border-radius: 8px; padding: 11px 18px; background: var(--ink); color: var(--paper-raised); font-family: 'Public Sans', sans-serif; font-weight: 600; font-size: 14px; letter-spacing: 0.01em; transition: transform 0.12s ease, background 0.12s ease; }
   button:hover { background: var(--slate); }
   button:active { transform: scale(0.98); }
@@ -54,7 +82,6 @@
   .invite-code { display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; letter-spacing: 0.12em; background: var(--paper); border: 1px dashed var(--brass); border-radius: 8px; padding: 8px 16px; color: var(--brass-deep); }
   .student-row, .request-card { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--rule-light); font-size: 14px; }
   .student-row:last-child, .request-card:last-child { border-bottom: none; }
-  .student-row span:last-child { font-family: 'IBM Plex Mono', monospace; color: var(--slate); font-size: 13px; }
   .request-card { flex-direction: column; align-items: flex-start; gap: 8px; }
   .request-card > div { display: flex; gap: 8px; }
   .error { color: #A94438; font-size: 13px; margin-top: 8px; }
@@ -86,6 +113,12 @@
     font-size: 15px; line-height: 1; display: flex; align-items: center; justify-content: center;
   }
   .detail-arrow:hover { background: var(--brass-deep); color: #FFF9EF; border-color: var(--brass-deep); }
+
+  .theme-options { display: flex; gap: 10px; flex-wrap: wrap; }
+  .theme-swatch { display: flex; align-items: center; gap: 8px; padding: 9px 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper-raised); color: var(--ink); font-size: 13px; font-weight: 600; }
+  .theme-swatch:hover { background: var(--rule-light); }
+  .theme-swatch.active { border-color: var(--brass-deep); background: var(--rule-light); }
+  .theme-dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -99,12 +132,10 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection,
-  onSnapshot, query, where, serverTimestamp, writeBatch, getDocs, arrayUnion, arrayRemove
+  onSnapshot, query, where, serverTimestamp, writeBatch, getDocs
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 // TODO: replace with this project's own Firebase config
-// (create a new Firebase project for the flute scheduler —
-// keep it separate from the dance tracker's project)
 const firebaseConfig = {
   apiKey: "AIzaSyAQm_jCLFWm8snbs0jCOOWP6AYMiSbhuaY",
   authDomain: "lesson-scheduler-bd50c.firebaseapp.com",
@@ -120,13 +151,38 @@ const db = getFirestore(app);
 const googleProvider = new GoogleAuthProvider();
 
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const DAY_LETTERS = ['S','M','T','W','T','F','S'];
+const FULL_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const TEACHER_TABS = [
+  { id: 'students', label: 'Students' },
+  { id: 'schedule', label: 'Schedule' },
+  { id: 'settings', label: 'Settings' }
+];
+const STUDENT_TABS = [
+  { id: 'schedule', label: 'Schedule' },
+  { id: 'settings', label: 'Settings' }
+];
+const THEMES = [
+  { id: 'manuscript', label: 'Manuscript', dot: '#B8935A' },
+  { id: 'slate', label: 'Slate', dot: '#3D6E91' },
+  { id: 'forest', label: 'Forest', dot: '#6E8C3F' }
+];
+
 const el = document.getElementById('app');
 
-let state = { user: null, profile: null, loading: true, unsubs: [], teacherViewingStudent: null };
+let state = {
+  user: null, profile: null, loading: true, unsubs: [],
+  teacherViewingStudent: null, activeTab: null, drawerOpen: false
+};
 
 function clearUnsubs() {
   state.unsubs.forEach((u) => u());
   state.unsubs = [];
+}
+
+function applyTheme() {
+  const theme = (state.profile && state.profile.theme) || 'manuscript';
+  document.documentElement.setAttribute('data-theme', theme);
 }
 
 function staffSvg() {
@@ -139,11 +195,29 @@ function staffSvg() {
   </svg>`;
 }
 
-function dayOptions(selected) {
-  return DAYS.map((d, i) => `<option value="${i}" ${i === selected ? 'selected' : ''}>${d}</option>`).join('');
+function topbarHtml(title) {
+  return `
+    <div class="topbar">
+      <button class="hamburger-btn" onclick="window.openDrawer()">☰</button>
+      <h1 class="display">${title}</h1>
+    </div>`;
 }
 
-const DAY_LETTERS = ['S','M','T','W','T','F','S'];
+function renderDrawer() {
+  if (!state.drawerOpen) return '';
+  const tabs = state.profile.role === 'teacher' ? TEACHER_TABS : STUDENT_TABS;
+  return `
+    <div class="drawer-overlay" onclick="window.closeDrawer()"></div>
+    <div class="drawer-panel">
+      <button class="drawer-close" onclick="window.closeDrawer()">✕</button>
+      <h2>Menu</h2>
+      ${tabs.map((t) => `<button class="drawer-tab ${state.activeTab === t.id ? 'active' : ''}" onclick="window.switchTab('${t.id}')">${t.label}</button>`).join('')}
+    </div>`;
+}
+
+window.openDrawer = function () { state.drawerOpen = true; render(); };
+window.closeDrawer = function () { state.drawerOpen = false; render(); };
+window.switchTab = function (tabId) { state.activeTab = tabId; state.drawerOpen = false; render(); };
 
 function timeToMinutes(t) {
   const [h, m] = t.split(':').map(Number);
@@ -166,8 +240,6 @@ function formatTime12(t) {
   if (h === 0) h = 12;
   return `${h}:${mStr} ${ampm}`;
 }
-
-const FULL_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
 /** Next calendar date (today included) matching the given weekday. */
 function nextOccurrenceDate(dayOfWeek) {
@@ -215,7 +287,7 @@ onAuthStateChanged(auth, async (firebaseUser) => {
   } else {
     const bare = {
       name: firebaseUser.displayName || '', email: firebaseUser.email || '',
-      photoURL: firebaseUser.photoURL || '', role: null, teacherId: null, inviteCode: null
+      photoURL: firebaseUser.photoURL || '', role: null, teacherId: null, inviteCode: null, theme: 'manuscript'
     };
     await setDoc(ref, bare);
     state.profile = bare;
@@ -255,8 +327,6 @@ async function requestConnectionByEmail(fromRole, toEmail) {
   const email = toEmail.trim().toLowerCase();
 
   if (fromRole === 'teacher') {
-    // Student may not have an account yet — no lookup needed. They'll see
-    // this waiting for them the moment they sign in for the first time.
     if (email === state.profile.email.toLowerCase()) throw new Error("That's your own email.");
     await addDoc(collection(db, 'connectionRequests'), {
       teacherId: state.user.uid, teacherName: state.profile.name, teacherEmail: state.profile.email,
@@ -266,9 +336,6 @@ async function requestConnectionByEmail(fromRole, toEmail) {
     return;
   }
 
-  // Student inviting a teacher: teachers always have an account already
-  // (they have to sign in and pick "I'm the teacher" before sharing an
-  // invite code or email), so this lookup is safe to require.
   const q = query(collection(db, 'users'), where('email', '==', toEmail.trim()));
   const results = await getDocs(q);
   if (results.empty) throw new Error("No teacher account found with that email.");
@@ -285,9 +352,6 @@ async function requestConnectionByEmail(fromRole, toEmail) {
 }
 
 async function acceptConnectionRequest(requestId, request) {
-  // studentId may be null if the teacher invited by email before the
-  // student had ever signed in — fill it in now, from whoever is
-  // confirming this (must be the signed-in student themselves).
   const studentId = request.studentId || state.user.uid;
   const studentName = request.studentName || state.profile.name;
   const studentEmail = request.studentEmail || state.profile.email;
@@ -382,6 +446,7 @@ async function deleteAccount() {
 
 function deleteAccountBlock() {
   return `<section id="delete-account-section">
+    <h2>Delete account</h2>
     <button class="danger-link" onclick="window.showDeleteConfirm()">Delete my account</button>
     <div id="delete-confirm-box"></div>
   </section>`;
@@ -409,18 +474,84 @@ window.confirmDeleteAccount = async function (btn) {
   }
 };
 
+// ---------- Settings (shared by teacher and student) ----------
+window.saveDisplayName = async function (e) {
+  e.preventDefault();
+  const newName = document.getElementById('display-name-input').value.trim();
+  const resultBox = document.getElementById('display-name-result');
+  if (!newName) return;
+  await updateDoc(doc(db, 'users', state.user.uid), { name: newName });
+  state.profile = { ...state.profile, name: newName };
+  if (state.profile.role === 'student' && state.profile.teacherId) {
+    try {
+      await updateDoc(doc(db, 'users', state.profile.teacherId, 'students', state.user.uid), { name: newName });
+    } catch (err) { /* ignore */ }
+  }
+  if (resultBox) resultBox.innerHTML = `<p class="ok">Saved.</p>`;
+};
+
+window.setTheme = async function (themeId) {
+  state.profile = { ...state.profile, theme: themeId };
+  applyTheme();
+  await updateDoc(doc(db, 'users', state.user.uid), { theme: themeId });
+  render();
+};
+
+function renderSettingsTab() {
+  const title = state.profile.role === 'teacher' ? 'Settings' : 'Settings';
+  el.innerHTML = `
+    <div class="app-shell">
+      ${topbarHtml(title)}
+      ${renderDrawer()}
+      <section>
+        <h2>Display name</h2>
+        <form class="inline" onsubmit="window.saveDisplayName(event)">
+          <input id="display-name-input" value="${(state.profile.name || '').replace(/"/g, '&quot;')}" />
+          <button class="ghost" type="submit">Save</button>
+        </form>
+        <div id="display-name-result"></div>
+      </section>
+
+      <section>
+        <h2>Theme</h2>
+        <div class="theme-options">
+          ${THEMES.map((t) => `
+            <button type="button" class="theme-swatch ${(state.profile.theme || 'manuscript') === t.id ? 'active' : ''}" onclick="window.setTheme('${t.id}')">
+              <span class="theme-dot" style="background:${t.dot};"></span>${t.label}
+            </button>`).join('')}
+        </div>
+      </section>
+
+      <section>
+        <h2>Account</h2>
+        <button class="ghost" onclick="window.logout()">Sign out</button>
+      </section>
+
+      <div id="delete-account-mount"></div>
+    </div>`;
+  document.getElementById('delete-account-mount').innerHTML = deleteAccountBlock();
+}
+
 // ---------- Screens ----------
 function render() {
   clearUnsubs();
+  applyTheme();
   if (state.loading) { el.innerHTML = `<div class="center">Loading…</div>`; return; }
   if (!state.user) { renderLogin(); return; }
   if (!state.profile?.role) { renderChooseRole(); return; }
+
   if (state.profile.role === 'teacher') {
     if (state.teacherViewingStudent) { renderStudentDetailView(); return; }
-    renderTeacherDashboard();
+    if (!TEACHER_TABS.some((t) => t.id === state.activeTab)) state.activeTab = 'students';
+    if (state.activeTab === 'schedule') { renderTeacherScheduleTab(); return; }
+    if (state.activeTab === 'settings') { renderSettingsTab(); return; }
+    renderTeacherStudentsTab();
     return;
   }
-  renderStudentView();
+
+  if (!STUDENT_TABS.some((t) => t.id === state.activeTab)) state.activeTab = 'schedule';
+  if (state.activeTab === 'settings') { renderSettingsTab(); return; }
+  renderStudentScheduleTab();
 }
 
 function renderLogin() {
@@ -450,8 +581,6 @@ function renderChooseRole() {
       <button class="ghost" style="margin-top:24px;" onclick="window.logout()">Sign out</button>
     </div>`;
 
-  // Matched by email, not uid — a teacher-initiated request may have been
-  // created before this account existed, so studentId won't be set yet.
   const q = query(collection(db, 'connectionRequests'),
     where('studentEmail', '==', (state.user.email || '').toLowerCase()),
     where('status', '==', 'pending'), where('initiatedBy', '==', 'teacher'));
@@ -532,14 +661,12 @@ window.declineIncoming = async function (requestId) {
   await rejectConnectionRequest(requestId);
 };
 
-// ---------- Teacher dashboard ----------
-function renderTeacherDashboard() {
+// ---------- Teacher: Students tab ----------
+function renderTeacherStudentsTab() {
   el.innerHTML = `
     <div class="app-shell">
-      <header class="page-header">
-        <h1 class="display">Your Studio</h1>
-        <button class="ghost" onclick="window.logout()">Sign out</button>
-      </header>
+      ${topbarHtml('Students')}
+      ${renderDrawer()}
 
       <section>
         <h2>Invite code</h2>
@@ -558,14 +685,28 @@ function renderTeacherDashboard() {
       </section>
 
       <div id="connection-requests-section"></div>
-      <div id="teacher-availability-section"></div>
-
-      <div id="reschedule-requests-section"></div>
       <div id="students-section"></div>
-      <div id="delete-account-mount"></div>
     </div>`;
 
-  document.getElementById('delete-account-mount').innerHTML = deleteAccountBlock();
+  const cq = query(collection(db, 'connectionRequests'),
+    where('teacherId', '==', state.user.uid), where('status', '==', 'pending'), where('initiatedBy', '==', 'student'));
+  const unsubConnections = onSnapshot(cq, (snap) => {
+    const requests = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const box = document.getElementById('connection-requests-section');
+    if (!box) return;
+    box.innerHTML = requests.length === 0 ? '' : `
+      <section>
+        <h2>Students waiting for your confirmation</h2>
+        ${requests.map((r) => `
+          <div class="request-card">
+            <p style="margin:0;">${r.studentName} (${r.studentEmail})</p>
+            <div>
+              <button class="primary" onclick='window.confirmStudentRequest(${JSON.stringify(r).replace(/'/g, "&apos;")})'>Confirm</button>
+              <button class="ghost" onclick="window.declineIncoming('${r.id}')">Decline</button>
+            </div>
+          </div>`).join('')}
+      </section>`;
+  });
 
   const unsubStudents = onSnapshot(collection(db, 'users', state.user.uid, 'students'), (snap) => {
     const students = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -588,43 +729,91 @@ function renderTeacherDashboard() {
       </section>`;
   });
 
-  const unsubRequests = onSnapshot(collection(db, 'users', state.user.uid, 'rescheduleRequests'), (snap) => {
-    const requests = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((r) => r.status === 'pending');
-    const box = document.getElementById('reschedule-requests-section');
-    if (!box) return;
-    box.innerHTML = requests.length === 0 ? '' : `
+  state.unsubs.push(unsubConnections, unsubStudents);
+}
+
+window.inviteStudentByEmail = async function (e) {
+  e.preventDefault();
+  const emailVal = document.getElementById('invite-student-email').value;
+  const resultBox = document.getElementById('invite-student-result');
+  try {
+    await requestConnectionByEmail('teacher', emailVal);
+    resultBox.innerHTML = `<p class="ok">Request sent.</p>`;
+    document.getElementById('invite-student-email').value = '';
+  } catch (err) {
+    resultBox.innerHTML = `<p class="error">${err.message}</p>`;
+  }
+};
+
+window.confirmStudentRequest = async function (request) {
+  await acceptConnectionRequest(request.id, request);
+};
+
+window.removeStudent = async function (studentId, studentName) {
+  if (!confirm(`Remove ${studentName} from your roster? This frees up their lesson slot.`)) return;
+  const teacherId = state.user.uid;
+  const batch = writeBatch(db);
+  batch.delete(doc(db, 'users', teacherId, 'students', studentId));
+  const lessonsSnap = await getDocs(query(collection(db, 'users', teacherId, 'lessons'), where('studentId', '==', studentId)));
+  lessonsSnap.forEach((d) => batch.delete(d.ref));
+  const unavailSnap = await getDocs(collection(db, 'users', teacherId, 'students', studentId, 'unavailableDates'));
+  unavailSnap.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+  try {
+    await updateDoc(doc(db, 'users', studentId), { teacherId: null, role: null });
+  } catch (err) { /* ignore — their account may not exist anymore */ }
+};
+
+window.viewStudentDetail = function (studentId, studentName) {
+  state.teacherViewingStudent = { id: studentId, name: studentName };
+  render();
+};
+
+window.backToRoster = function () {
+  state.teacherViewingStudent = null;
+  render();
+};
+
+function renderStudentDetailView() {
+  const { id: studentId, name: studentName } = state.teacherViewingStudent;
+  const teacherId = state.user.uid;
+
+  el.innerHTML = `
+    <div class="app-shell">
+      <header class="page-header" style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:28px;">
+        <h1 class="display">${studentName}</h1>
+        <button class="ghost" onclick="window.backToRoster()">← Back</button>
+      </header>
       <section>
-        <h2>Pending reschedule requests</h2>
-        ${requests.map((r) => `
-          <div class="request-card">
-            <p style="margin:0;">${r.studentName}: ${r.fromDate} → ${r.toDate} ${r.toStartTime}</p>
-            <div>
-              <button class="primary" onclick="window.respondReschedule('${r.id}', true)">Approve</button>
-              <button class="ghost" onclick="window.respondReschedule('${r.id}', false)">Deny</button>
-            </div>
-          </div>`).join('')}
-      </section>`;
+        <h2>Unavailable dates</h2>
+        <p>Dates and times ${studentName} has marked they can't make a lesson.</p>
+        <div id="student-detail-list"><p>Loading…</p></div>
+      </section>
+    </div>`;
+
+  const unsub = onSnapshot(collection(db, 'users', teacherId, 'students', studentId, 'unavailableDates'), (snap) => {
+    const entries = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+    const box = document.getElementById('student-detail-list');
+    if (!box) return;
+    box.innerHTML = entries.length === 0
+      ? '<p>No unavailable dates marked.</p>'
+      : entries.map((e) => `<p style="margin:0 0 4px;">${e.date}, ${formatTime12(e.startTime)}–${formatTime12(e.endTime)}</p>`).join('');
   });
 
-  const cq = query(collection(db, 'connectionRequests'),
-    where('teacherId', '==', state.user.uid), where('status', '==', 'pending'), where('initiatedBy', '==', 'student'));
-  const unsubConnections = onSnapshot(cq, (snap) => {
-    const requests = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    const box = document.getElementById('connection-requests-section');
-    if (!box) return;
-    box.innerHTML = requests.length === 0 ? '' : `
-      <section>
-        <h2>Students waiting for your confirmation</h2>
-        ${requests.map((r) => `
-          <div class="request-card">
-            <p style="margin:0;">${r.studentName} (${r.studentEmail})</p>
-            <div>
-              <button class="primary" onclick='window.confirmStudentRequest(${JSON.stringify(r).replace(/'/g, "&apos;")})'>Confirm</button>
-              <button class="ghost" onclick="window.declineIncoming('${r.id}')">Decline</button>
-            </div>
-          </div>`).join('')}
-      </section>`;
-  });
+  state.unsubs.push(unsub);
+}
+
+// ---------- Teacher: Schedule tab ----------
+function renderTeacherScheduleTab() {
+  el.innerHTML = `
+    <div class="app-shell">
+      ${topbarHtml('Schedule')}
+      ${renderDrawer()}
+      <div id="teacher-availability-section"></div>
+      <div id="reschedule-requests-section"></div>
+    </div>`;
 
   let teacherUnavailableBlocks = [];
 
@@ -684,9 +873,7 @@ function renderTeacherDashboard() {
     const startTime = document.getElementById('block-start').value;
     const endTime = document.getElementById('block-end').value;
     if (!date || !startTime || !endTime) return;
-    const isDuplicate = teacherUnavailableBlocks.some((b) =>
-      b.date === date && b.startTime === startTime && b.endTime === endTime
-    );
+    const isDuplicate = teacherUnavailableBlocks.some((b) => b.date === date && b.startTime === startTime && b.endTime === endTime);
     if (isDuplicate) return;
     addingUnavailableBlock = true;
     try {
@@ -702,7 +889,25 @@ function renderTeacherDashboard() {
 
   renderTeacherScheduleSection();
 
-  state.unsubs.push(unsubStudents, unsubRequests, unsubConnections, unsubUnavailable);
+  const unsubRequests = onSnapshot(collection(db, 'users', state.user.uid, 'rescheduleRequests'), (snap) => {
+    const requests = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((r) => r.status === 'pending');
+    const box = document.getElementById('reschedule-requests-section');
+    if (!box) return;
+    box.innerHTML = requests.length === 0 ? '' : `
+      <section>
+        <h2>Pending reschedule requests</h2>
+        ${requests.map((r) => `
+          <div class="request-card">
+            <p style="margin:0;">${r.studentName}: ${r.fromDate} → ${r.toDate} ${formatTime12(r.toStartTime)}</p>
+            <div>
+              <button class="primary" onclick="window.respondReschedule('${r.id}', true)">Approve</button>
+              <button class="ghost" onclick="window.respondReschedule('${r.id}', false)">Deny</button>
+            </div>
+          </div>`).join('')}
+      </section>`;
+  });
+
+  state.unsubs.push(unsubUnavailable, unsubRequests);
 }
 
 window.toggleActiveDay = async function (dayIndex) {
@@ -730,106 +935,22 @@ window.saveWeeklySchedule = async function (e) {
   render();
 };
 
-window.saveCutoff = async function (value) {
-  await updateDoc(doc(db, 'users', state.user.uid), { rescheduleCutoffHours: Number(value) });
-};
-
-window.inviteStudentByEmail = async function (e) {
-  e.preventDefault();
-  const emailVal = document.getElementById('invite-student-email').value;
-  const resultBox = document.getElementById('invite-student-result');
-  try {
-    await requestConnectionByEmail('teacher', emailVal);
-    resultBox.innerHTML = `<p class="ok">Request sent.</p>`;
-    document.getElementById('invite-student-email').value = '';
-  } catch (err) {
-    resultBox.innerHTML = `<p class="error">${err.message}</p>`;
-  }
-};
-
-window.removeStudent = async function (studentId, studentName) {
-  if (!confirm(`Remove ${studentName} from your roster? This frees up their lesson slot.`)) return;
-  const teacherId = state.user.uid;
-  const batch = writeBatch(db);
-  batch.delete(doc(db, 'users', teacherId, 'students', studentId));
-  const lessonsSnap = await getDocs(query(collection(db, 'users', teacherId, 'lessons'), where('studentId', '==', studentId)));
-  lessonsSnap.forEach((d) => batch.delete(d.ref));
-  const unavailSnap = await getDocs(collection(db, 'users', teacherId, 'students', studentId, 'unavailableDates'));
-  unavailSnap.forEach((d) => batch.delete(d.ref));
-  await batch.commit();
-  // Best-effort: if that student's own account still points at this
-  // teacher, unlink it too (harmless if the account no longer exists).
-  try {
-    await updateDoc(doc(db, 'users', studentId), { teacherId: null, role: null });
-  } catch (err) { /* ignore — their account may not exist anymore */ }
-};
-
-window.viewStudentDetail = function (studentId, studentName) {
-  state.teacherViewingStudent = { id: studentId, name: studentName };
-  render();
-};
-
-window.backToRoster = function () {
-  state.teacherViewingStudent = null;
-  render();
-};
-
-function renderStudentDetailView() {
-  const { id: studentId, name: studentName } = state.teacherViewingStudent;
-  const teacherId = state.user.uid;
-
-  el.innerHTML = `
-    <div class="app-shell">
-      <header class="page-header">
-        <h1 class="display">${studentName}</h1>
-        <button class="ghost" onclick="window.backToRoster()">← Back</button>
-      </header>
-      <section>
-        <h2>Unavailable dates</h2>
-        <p>Dates and times ${studentName} has marked they can't make a lesson.</p>
-        <div id="student-detail-list"><p>Loading…</p></div>
-      </section>
-    </div>`;
-
-  const unsub = onSnapshot(collection(db, 'users', teacherId, 'students', studentId, 'unavailableDates'), (snap) => {
-    const entries = snap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
-    const box = document.getElementById('student-detail-list');
-    if (!box) return;
-    box.innerHTML = entries.length === 0
-      ? '<p>No unavailable dates marked.</p>'
-      : entries.map((e) => `<p style="margin:0 0 4px;">${e.date}, ${formatTime12(e.startTime)}–${formatTime12(e.endTime)}</p>`).join('');
-  });
-
-  state.unsubs.push(unsub);
-}
-
-window.confirmStudentRequest = async function (request) {
-  await acceptConnectionRequest(request.id, request);
-};
-
 window.respondReschedule = async function (requestId, approve) {
   await respondToRequest(state.user.uid, requestId, approve);
 };
 
-// ---------- Student view ----------
-function renderStudentView() {
+// ---------- Student: Schedule tab ----------
+function renderStudentScheduleTab() {
   el.innerHTML = `
     <div class="app-shell">
-      <header class="page-header">
-        <h1 class="display">My Lessons</h1>
-        <button class="ghost" onclick="window.logout()">Sign out</button>
-      </header>
+      ${topbarHtml('Schedule')}
+      ${renderDrawer()}
       <div id="my-lesson-section"><section><h2>Upcoming lesson</h2><p>Loading…</p></section></div>
       <div id="teacher-unavailable-section"></div>
       <div id="lesson-time-section"></div>
       <div id="unavailable-section"></div>
       <div id="reschedule-picker-section"></div>
-      <div id="delete-account-mount"></div>
     </div>`;
-
-  document.getElementById('delete-account-mount').innerHTML = deleteAccountBlock();
 
   if (!state.profile.teacherId) {
     document.getElementById('my-lesson-section').innerHTML = `
@@ -920,6 +1041,24 @@ function renderStudentView() {
       </section>`;
   }
 
+  function renderMyLessonSection() {
+    const box = document.getElementById('my-lesson-section');
+    if (!box) return;
+    let line;
+    if (myLesson) {
+      line = `${myLesson.date} at ${formatTime12(myLesson.startTime)}${myLesson.status === 'pending_reschedule' ? ' (reschedule pending teacher approval)' : ''}`;
+    } else if (myStudentDoc.recurringSlot) {
+      line = formatUpcomingLessonLine(myStudentDoc.recurringSlot.dayOfWeek, myStudentDoc.recurringSlot.startTime);
+    } else {
+      line = null;
+    }
+    box.innerHTML = `
+      <section>
+        <h2>Upcoming lesson</h2>
+        ${line ? `<p>${line}</p>` : `<p>No upcoming lesson scheduled yet — check with your teacher.</p>`}
+      </section>`;
+  }
+
   window.toggleSlotPicker = function () {
     showSlotPicker = !showSlotPicker;
     pickerDay = null;
@@ -963,24 +1102,6 @@ function renderStudentView() {
   window.removeUnavailableDate = async function (entryId) {
     await deleteDoc(doc(db, 'users', teacherId, 'students', uid, 'unavailableDates', entryId));
   };
-
-  function renderMyLessonSection() {
-    const box = document.getElementById('my-lesson-section');
-    if (!box) return;
-    let line;
-    if (myLesson) {
-      line = `${myLesson.date} at ${formatTime12(myLesson.startTime)}${myLesson.status === 'pending_reschedule' ? ' (reschedule pending teacher approval)' : ''}`;
-    } else if (myStudentDoc.recurringSlot) {
-      line = formatUpcomingLessonLine(myStudentDoc.recurringSlot.dayOfWeek, myStudentDoc.recurringSlot.startTime);
-    } else {
-      line = null;
-    }
-    box.innerHTML = `
-      <section>
-        <h2>Upcoming lesson</h2>
-        ${line ? `<p>${line}</p>` : `<p>No upcoming lesson scheduled yet — check with your teacher.</p>`}
-      </section>`;
-  }
 
   const unsubMyDoc = onSnapshot(doc(db, 'users', teacherId, 'students', uid), (snap) => {
     myStudentDoc = snap.exists() ? { recurringSlot: null, ...snap.data() } : myStudentDoc;
