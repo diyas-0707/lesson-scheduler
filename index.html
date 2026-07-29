@@ -512,12 +512,12 @@ async function respondToRequest(teacherId, requestId, approve) {
   await updateDoc(requestRef, { status: approve ? 'approved' : 'denied' });
 }
 
-// ---------- One-off reschedule proposals (teacher flags a specific date's
-// conflicting lesson; student picks a new day/time for that occurrence only —
-// the permanent weekly slot is untouched). ----------
-async function proposeReschedule(teacherId, studentId, originalDate, originalStartTime) {
+// ---------- One-off reschedule proposals (either side flags a specific
+// date's conflicting lesson; the OTHER side picks a new day/time for that
+// occurrence only — the permanent weekly slot is untouched). ----------
+async function proposeReschedule(teacherId, studentId, originalDate, originalStartTime, requestedBy) {
   await addDoc(collection(db, 'users', teacherId, 'students', studentId, 'rescheduleProposals'), {
-    originalDate, originalStartTime, status: 'pending', newDate: null, newStartTime: null, createdAt: serverTimestamp()
+    originalDate, originalStartTime, requestedBy, status: 'pending', newDate: null, newStartTime: null, createdAt: serverTimestamp()
   });
 }
 
@@ -920,7 +920,7 @@ function renderTeacherCalendarTab() {
   window.openDayDetail = function (iso) { expandedDate = iso; draw(); };
   window.closeDayDetail = function () { expandedDate = null; draw(); };
   window.sendRescheduleProposal = async function (studentId, originalDate, originalStartTime) {
-    await proposeReschedule(teacherId, studentId, originalDate, originalStartTime);
+    await proposeReschedule(teacherId, studentId, originalDate, originalStartTime, 'teacher');
     draw();
   };
 
@@ -957,7 +957,7 @@ function renderTeacherCalendarTab() {
             blocks.push({
               type: 'lesson', color: colorForStudent(s.id), conflict, label,
               studentId: s.id, date: iso, startTime: s.recurringSlot.startTime,
-              hasPendingProposal: !!pendingProposal
+              pendingProposalDirection: pendingProposal ? pendingProposal.requestedBy : null
             });
           });
         students.forEach((s) => {
@@ -1018,9 +1018,11 @@ function renderTeacherCalendarTab() {
             <div class="day-detail-event">
               <div>${b.label}</div>
               ${b.type === 'lesson' && b.conflict
-                ? (b.hasPendingProposal
+                ? (b.pendingProposalDirection === 'teacher'
                     ? `<p style="margin:6px 0 0; font-size:12px; color:var(--ink-soft);">Reschedule requested — waiting on student.</p>`
-                    : `<button class="ghost" style="margin-top:6px; padding:6px 10px; font-size:12px;" onclick="window.sendRescheduleProposal('${b.studentId}', '${b.date}', '${b.startTime}')">Propose reschedule</button>`)
+                    : b.pendingProposalDirection === 'student'
+                      ? `<p style="margin:6px 0 0; font-size:12px; color:var(--ink-soft);">Student requested a reschedule — pick a new time on the Schedule tab.</p>`
+                      : `<button class="ghost" style="margin-top:6px; padding:6px 10px; font-size:12px;" onclick="window.sendRescheduleProposal('${b.studentId}', '${b.date}', '${b.startTime}')">Propose reschedule</button>`)
                 : ''}
             </div>`).join('')}
         </div>`;
@@ -1076,6 +1078,7 @@ function renderStudentCalendarTab() {
   let weeklySchedule = null;
   let unavailableBlocks = [];
   let myProposals = [];
+  let myUnavailableDates = [];
   let expandedDate = null;
 
   function isTakenByAnyone(dayOfWeek, startTime) {
@@ -1084,6 +1087,10 @@ function renderStudentCalendarTab() {
 
   window.openDayDetail = function (iso) { expandedDate = iso; draw(); };
   window.closeDayDetail = function () { expandedDate = null; draw(); };
+  window.requestRescheduleFromStudent = async function (originalDate, originalStartTime) {
+    await proposeReschedule(teacherId, uid, originalDate, originalStartTime, 'student');
+    draw();
+  };
 
   function draw() {
     const box = document.getElementById('calendar-content');
@@ -1095,13 +1102,24 @@ function renderStudentCalendarTab() {
       const iso = isoDate(d);
       const blocks = [];
       const movedAway = myProposals.some((p) => p.status === 'resolved' && p.originalDate === iso);
+      const pendingProposal = myProposals.find((p) => p.status === 'pending' && p.originalDate === iso);
       if (myStudentDoc.recurringSlot && myStudentDoc.recurringSlot.dayOfWeek === dow && !movedAway) {
         const durationMin = myStudentDoc.recurringSlot.durationMinutes || 30;
-        const endTime = minutesToTime(timeToMinutes(myStudentDoc.recurringSlot.startTime) + durationMin);
+        const startMin = timeToMinutes(myStudentDoc.recurringSlot.startTime);
+        const endMin = startMin + durationMin;
+        const endTime = minutesToTime(endMin);
+        const conflict = myUnavailableDates
+          .filter((u) => u.date === iso)
+          .some((u) => rangesOverlap(startMin, endMin, timeToMinutes(u.startTime), timeToMinutes(u.endTime)));
+        const suffix = pendingProposal ? ' (reschedule requested)' : '';
         const label = verbose
-          ? `Your lesson, ${formatTime12(myStudentDoc.recurringSlot.startTime)}–${formatTime12(endTime)}`
-          : `${formatTimeCompact(myStudentDoc.recurringSlot.startTime)} Lesson`;
-        blocks.push({ type: 'lesson', color: '#8C6D3F', label });
+          ? `${conflict ? '⚠ Conflict — ' : ''}Your lesson, ${formatTime12(myStudentDoc.recurringSlot.startTime)}–${formatTime12(endTime)}${suffix}`
+          : `${conflict ? '⚠ ' : ''}${formatTimeCompact(myStudentDoc.recurringSlot.startTime)} Lesson`;
+        blocks.push({
+          type: 'lesson', color: '#8C6D3F', label, conflict,
+          date: iso, startTime: myStudentDoc.recurringSlot.startTime,
+          pendingProposalDirection: pendingProposal ? pendingProposal.requestedBy : null
+        });
       }
       myProposals.filter((p) => p.status === 'resolved' && p.newDate === iso).forEach((p) => {
         const durationMin = (myStudentDoc.recurringSlot && myStudentDoc.recurringSlot.durationMinutes) || 30;
@@ -1147,7 +1165,17 @@ function renderStudentCalendarTab() {
             <h2 class="display" style="font-size:18px;">${d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</h2>
             <button class="ghost" onclick="window.closeDayDetail()">Close</button>
           </div>
-          ${blocksFull.length === 0 ? '<p>No events.</p>' : blocksFull.map((b) => `<div class="day-detail-event">${b.label}</div>`).join('')}
+          ${blocksFull.length === 0 ? '<p>No events.</p>' : blocksFull.map((b) => `
+            <div class="day-detail-event">
+              <div>${b.label}</div>
+              ${b.type === 'lesson' && b.conflict
+                ? (b.pendingProposalDirection === 'student'
+                    ? `<p style="margin:6px 0 0; font-size:12px; color:var(--ink-soft);">Reschedule requested — waiting on your teacher.</p>`
+                    : b.pendingProposalDirection === 'teacher'
+                      ? `<p style="margin:6px 0 0; font-size:12px; color:var(--ink-soft);">Your teacher proposed a reschedule — pick a new time on the Schedule tab.</p>`
+                      : `<button class="ghost" style="margin-top:6px; padding:6px 10px; font-size:12px;" onclick="window.requestRescheduleFromStudent('${b.date}', '${b.startTime}')">Request reschedule</button>`)
+                : ''}
+            </div>`).join('')}
         </div>`;
     }
 
@@ -1179,13 +1207,17 @@ function renderStudentCalendarTab() {
     unavailableBlocks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     draw();
   });
+  const unsubMyUnavailableForConflict = onSnapshot(collection(db, 'users', teacherId, 'students', uid, 'unavailableDates'), (snap) => {
+    myUnavailableDates = snap.docs.map((d) => d.data());
+    draw();
+  });
   const unsubProposals = onSnapshot(collection(db, 'users', teacherId, 'students', uid, 'rescheduleProposals'), (snap) => {
     myProposals = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     draw();
   });
 
   draw();
-  state.unsubs.push(unsubMyDoc, unsubAllStudents, unsubTeacherDoc, unsubUnavail, unsubProposals);
+  state.unsubs.push(unsubMyDoc, unsubAllStudents, unsubTeacherDoc, unsubUnavail, unsubMyUnavailableForConflict, unsubProposals);
 }
 
 // ---------- Teacher: Students tab ----------
@@ -1341,9 +1373,11 @@ function renderTeacherScheduleTab() {
       ${topbarHtml('Schedule')}
       ${renderDrawer()}
       <div id="teacher-availability-section"></div>
+      <div id="student-requests-section"></div>
       <div id="reschedule-requests-section"></div>
     </div>`;
 
+  const teacherId = state.user.uid;
   let teacherUnavailableBlocks = [];
 
   function renderTeacherScheduleSection() {
@@ -1418,6 +1452,89 @@ function renderTeacherScheduleTab() {
 
   renderTeacherScheduleSection();
 
+  // ---- Reschedule requests students have sent to the teacher ----
+  let studentsForProposals = [];
+  let studentProposalsMap2 = {};
+  let studentProposalListeners2 = {};
+  let proposalDatePicks = {};
+
+  function subscribeStudentProposals(studentId) {
+    if (studentProposalListeners2[studentId]) return;
+    const unsub = onSnapshot(collection(db, 'users', teacherId, 'students', studentId, 'rescheduleProposals'), (snap) => {
+      studentProposalsMap2[studentId] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderStudentRequestsSection();
+    });
+    studentProposalListeners2[studentId] = unsub;
+    state.unsubs.push(unsub);
+  }
+  function unsubscribeStudentProposals(studentId) {
+    if (studentProposalListeners2[studentId]) {
+      studentProposalListeners2[studentId]();
+      delete studentProposalListeners2[studentId];
+      delete studentProposalsMap2[studentId];
+    }
+  }
+
+  function computeTeacherPickerSlotsHtml(proposalId, studentId, chosenDate) {
+    if (!chosenDate) return '';
+    const ws = state.profile.weeklySchedule || { activeDays: [] };
+    const d = new Date(chosenDate + 'T00:00:00');
+    const dow = d.getDay();
+    const slotLen = ws.slotLengthMinutes || 30;
+    const openSlots = generateCandidateSlots(ws).filter((s) => s.dayOfWeek === dow).filter((s) => {
+      const taken = studentsForProposals.some((st) => st.id !== studentId && st.recurringSlot &&
+        st.recurringSlot.dayOfWeek === s.dayOfWeek && st.recurringSlot.startTime === s.startTime);
+      const blocked = teacherUnavailableBlocks.some((b) => b.date === chosenDate &&
+        rangesOverlap(timeToMinutes(s.startTime), timeToMinutes(s.startTime) + slotLen, timeToMinutes(b.startTime), timeToMinutes(b.endTime)));
+      return !taken && !blocked;
+    });
+    return openSlots.length === 0
+      ? '<p>No open times that day.</p>'
+      : openSlots.map((s) => `<button class="slot-chip" onclick="window.teacherResolveProposal('${studentId}', '${proposalId}', '${chosenDate}', '${s.startTime}')">${formatTime12(s.startTime)}</button>`).join('');
+  }
+
+  function renderStudentRequestsSection() {
+    const box = document.getElementById('student-requests-section');
+    if (!box) return;
+    const allPending = [];
+    studentsForProposals.forEach((s) => {
+      (studentProposalsMap2[s.id] || []).filter((p) => p.requestedBy === 'student' && p.status === 'pending')
+        .forEach((p) => allPending.push({ ...p, studentId: s.id, studentName: s.name }));
+    });
+    if (allPending.length === 0) { box.innerHTML = ''; return; }
+    box.innerHTML = `
+      <section>
+        <h2>Reschedule requests from students</h2>
+        ${allPending.map((p) => {
+          const chosenDate = proposalDatePicks[p.id] || '';
+          return `
+            <div class="request-card">
+              <p style="margin:0;">${p.studentName}: ${p.originalDate} at ${formatTime12(p.originalStartTime)}</p>
+              <input id="teacher-pick-date-${p.id}" type="date" value="${chosenDate}" onchange="window.pickTeacherProposalDate('${p.id}', '${p.studentId}', this.value)" />
+              <div id="teacher-pick-slots-${p.id}" style="margin-top:6px;">${computeTeacherPickerSlotsHtml(p.id, p.studentId, chosenDate)}</div>
+            </div>`;
+        }).join('')}
+      </section>`;
+  }
+
+  window.pickTeacherProposalDate = function (proposalId, studentId, dateStr) {
+    proposalDatePicks[proposalId] = dateStr;
+    const slotsBox = document.getElementById('teacher-pick-slots-' + proposalId);
+    if (slotsBox) slotsBox.innerHTML = computeTeacherPickerSlotsHtml(proposalId, studentId, dateStr);
+  };
+
+  window.teacherResolveProposal = async function (studentId, proposalId, newDate, newStartTime) {
+    await resolveRescheduleProposal(teacherId, studentId, proposalId, newDate, newStartTime);
+  };
+
+  const unsubStudentsForProposals = onSnapshot(collection(db, 'users', teacherId, 'students'), (snap) => {
+    studentsForProposals = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const currentIds = new Set(studentsForProposals.map((s) => s.id));
+    studentsForProposals.forEach((s) => subscribeStudentProposals(s.id));
+    Object.keys(studentProposalListeners2).forEach((id) => { if (!currentIds.has(id)) unsubscribeStudentProposals(id); });
+    renderStudentRequestsSection();
+  });
+
   const unsubRequests = onSnapshot(collection(db, 'users', state.user.uid, 'rescheduleRequests'), (snap) => {
     const requests = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((r) => r.status === 'pending');
     const box = document.getElementById('reschedule-requests-section');
@@ -1436,7 +1553,7 @@ function renderTeacherScheduleTab() {
       </section>`;
   });
 
-  state.unsubs.push(unsubUnavailable, unsubRequests);
+  state.unsubs.push(unsubUnavailable, unsubRequests, unsubStudentsForProposals);
 }
 
 window.toggleActiveDay = async function (dayIndex) {
@@ -1514,38 +1631,49 @@ function renderStudentScheduleTab() {
   let myProposals = [];
   let proposalPickerState = {};
 
+  function computeProposalSlotsHtml(proposalId, chosenDate) {
+    if (!chosenDate) return '';
+    const d = new Date(chosenDate + 'T00:00:00');
+    const dow = d.getDay();
+    const slotLen = (teacherWeeklySchedule && teacherWeeklySchedule.slotLengthMinutes) || 30;
+    const slots = candidateSlots().filter((s) => s.dayOfWeek === dow && !isSlotTaken(s.dayOfWeek, s.startTime) &&
+      !teacherUnavailableBlocks.some((b) => b.date === chosenDate &&
+        rangesOverlap(timeToMinutes(s.startTime), timeToMinutes(s.startTime) + slotLen, timeToMinutes(b.startTime), timeToMinutes(b.endTime))));
+    return slots.length === 0
+      ? '<p>No open times that day — try another date.</p>'
+      : slots.map((s) => `<button class="slot-chip" onclick="window.pickProposalSlot('${proposalId}', '${chosenDate}', '${s.startTime}')">${formatTime12(s.startTime)}</button>`).join('');
+  }
+
   function renderProposalsSection() {
     const box = document.getElementById('reschedule-proposal-section');
     if (!box) return;
     const pending = myProposals.filter((p) => p.status === 'pending');
     if (pending.length === 0) { box.innerHTML = ''; return; }
     box.innerHTML = pending.map((p) => {
-      const chosenDate = proposalPickerState[p.id] || '';
-      let slotsHtml = '';
-      if (chosenDate) {
-        const d = new Date(chosenDate + 'T00:00:00');
-        const dow = d.getDay();
-        const slotLen = (teacherWeeklySchedule && teacherWeeklySchedule.slotLengthMinutes) || 30;
-        const slots = candidateSlots().filter((s) => s.dayOfWeek === dow && !isSlotTaken(s.dayOfWeek, s.startTime) &&
-          !teacherUnavailableBlocks.some((b) => b.date === chosenDate &&
-            rangesOverlap(timeToMinutes(s.startTime), timeToMinutes(s.startTime) + slotLen, timeToMinutes(b.startTime), timeToMinutes(b.endTime))));
-        slotsHtml = slots.length === 0
-          ? '<p>No open times that day — try another date.</p>'
-          : slots.map((s) => `<button class="slot-chip" onclick="window.pickProposalSlot('${p.id}', '${chosenDate}', '${s.startTime}')">${formatTime12(s.startTime)}</button>`).join('');
+      if (p.requestedBy === 'student') {
+        return `
+          <section>
+            <h2>Reschedule requested</h2>
+            <p>You asked to move your lesson on ${p.originalDate} at ${formatTime12(p.originalStartTime)} — waiting on your teacher to offer a new time.</p>
+          </section>`;
       }
+      const chosenDate = proposalPickerState[p.id] || '';
       return `
         <section>
           <h2>Reschedule needed</h2>
           <p>Your lesson on ${p.originalDate} at ${formatTime12(p.originalStartTime)} needs to move. Pick a new day and time:</p>
-          <input type="date" value="${chosenDate}" onchange="window.pickProposalDate('${p.id}', this.value)" />
-          <div style="margin-top:10px;">${slotsHtml}</div>
+          <input id="proposal-date-${p.id}" type="date" value="${chosenDate}" onchange="window.pickProposalDate('${p.id}', this.value)" />
+          <div id="proposal-slots-${p.id}" style="margin-top:10px;">${computeProposalSlotsHtml(p.id, chosenDate)}</div>
         </section>`;
     }).join('');
   }
 
   window.pickProposalDate = function (proposalId, dateStr) {
     proposalPickerState[proposalId] = dateStr;
-    renderProposalsSection();
+    // Only refresh the slot list — never the date input itself, or it loses
+    // focus mid-typing (this was cutting off year entry after one digit).
+    const slotsBox = document.getElementById('proposal-slots-' + proposalId);
+    if (slotsBox) slotsBox.innerHTML = computeProposalSlotsHtml(proposalId, dateStr);
   };
 
   window.pickProposalSlot = async function (proposalId, newDate, newStartTime) {
