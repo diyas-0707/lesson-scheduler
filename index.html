@@ -79,6 +79,13 @@
   .day-pill.selected:hover { background: var(--brass); }
   .day-pill.disabled { opacity: 0.3; cursor: not-allowed; }
   .day-pill.disabled:hover { background: var(--paper); color: var(--ink-soft); }
+
+  .detail-arrow {
+    background: transparent; color: var(--brass-deep); border: 1px solid var(--rule);
+    border-radius: 50%; width: 22px; height: 22px; padding: 0;
+    font-size: 15px; line-height: 1; display: flex; align-items: center; justify-content: center;
+  }
+  .detail-arrow:hover { background: var(--brass-deep); color: #FFF9EF; border-color: var(--brass-deep); }
 </style>
 </head>
 <body>
@@ -115,7 +122,7 @@ const googleProvider = new GoogleAuthProvider();
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const el = document.getElementById('app');
 
-let state = { user: null, profile: null, loading: true, unsubs: [] };
+let state = { user: null, profile: null, loading: true, unsubs: [], teacherViewingStudent: null };
 
 function clearUnsubs() {
   state.unsubs.forEach((u) => u());
@@ -239,7 +246,7 @@ async function connectStudentToTeacher(code) {
   await updateDoc(doc(db, 'users', state.user.uid), { teacherId, role: 'student' });
   await setDoc(doc(db, 'users', teacherId, 'students', state.user.uid), {
     studentId: state.user.uid, name: state.profile.name, email: state.profile.email,
-    recurringSlot: null, unavailableDates: [], connectedAt: new Date()
+    recurringSlot: null, connectedAt: new Date()
   });
   return teacherId;
 }
@@ -288,7 +295,7 @@ async function acceptConnectionRequest(requestId, request) {
 
   await updateDoc(doc(db, 'users', studentId), { teacherId, role: 'student' });
   await setDoc(doc(db, 'users', teacherId, 'students', studentId), {
-    studentId, name: studentName, email: studentEmail, recurringSlot: null, unavailableDates: [], connectedAt: new Date()
+    studentId, name: studentName, email: studentEmail, recurringSlot: null, connectedAt: new Date()
   });
   await updateDoc(doc(db, 'connectionRequests', requestId), { status: 'accepted', studentId });
 }
@@ -352,6 +359,8 @@ async function deleteAccount() {
     batch.delete(doc(db, 'users', state.profile.teacherId, 'students', uid));
     const lessonsSnap = await getDocs(query(collection(db, 'users', state.profile.teacherId, 'lessons'), where('studentId', '==', uid)));
     lessonsSnap.forEach((d) => batch.delete(d.ref));
+    const unavailSnap = await getDocs(collection(db, 'users', state.profile.teacherId, 'students', uid, 'unavailableDates'));
+    unavailSnap.forEach((d) => batch.delete(d.ref));
   }
   const asStudent = await getDocs(query(collection(db, 'connectionRequests'), where('studentId', '==', uid)));
   asStudent.forEach((d) => batch.delete(d.ref));
@@ -406,7 +415,11 @@ function render() {
   if (state.loading) { el.innerHTML = `<div class="center">Loading…</div>`; return; }
   if (!state.user) { renderLogin(); return; }
   if (!state.profile?.role) { renderChooseRole(); return; }
-  if (state.profile.role === 'teacher') { renderTeacherDashboard(); return; }
+  if (state.profile.role === 'teacher') {
+    if (state.teacherViewingStudent) { renderStudentDetailView(); return; }
+    renderTeacherDashboard();
+    return;
+  }
   renderStudentView();
 }
 
@@ -569,13 +582,13 @@ function renderTeacherDashboard() {
         <h2>Students (${students.length})</h2>
         ${students.length === 0 ? '<p>No students connected yet.</p>' : students.map((s) => `
           <div class="student-row" style="flex-direction:column; align-items:flex-start; gap:4px;">
-            <div style="display:flex; justify-content:space-between; width:100%;">
+            <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
               <span>${s.name}</span>
-              <span>${s.recurringSlot ? `${DAYS[s.recurringSlot.dayOfWeek]} ${formatTime12(s.recurringSlot.startTime)}` : 'No slot chosen yet'}</span>
+              <span style="display:flex; align-items:center; gap:6px;">
+                ${s.recurringSlot ? `${DAYS[s.recurringSlot.dayOfWeek]} ${formatTime12(s.recurringSlot.startTime)}` : 'No slot chosen yet'}
+                <button class="detail-arrow" title="View unavailable dates" onclick="window.viewStudentDetail('${s.id}', '${(s.name || '').replace(/'/g, "&apos;")}')">›</button>
+              </span>
             </div>
-            ${s.unavailableDates && s.unavailableDates.length > 0
-              ? `<span style="font-size:12px; color:var(--ink-soft);">Out: ${s.unavailableDates.slice().sort().join(', ')}</span>`
-              : ''}
             <button class="danger-link" style="font-size:12px;" onclick="window.removeStudent('${s.id}', '${(s.name || '').replace(/'/g, "&apos;")}')">Remove from roster</button>
           </div>`).join('')}
       </section>`;
@@ -747,6 +760,8 @@ window.removeStudent = async function (studentId, studentName) {
   batch.delete(doc(db, 'users', teacherId, 'students', studentId));
   const lessonsSnap = await getDocs(query(collection(db, 'users', teacherId, 'lessons'), where('studentId', '==', studentId)));
   lessonsSnap.forEach((d) => batch.delete(d.ref));
+  const unavailSnap = await getDocs(collection(db, 'users', teacherId, 'students', studentId, 'unavailableDates'));
+  unavailSnap.forEach((d) => batch.delete(d.ref));
   await batch.commit();
   // Best-effort: if that student's own account still points at this
   // teacher, unlink it too (harmless if the account no longer exists).
@@ -754,6 +769,47 @@ window.removeStudent = async function (studentId, studentName) {
     await updateDoc(doc(db, 'users', studentId), { teacherId: null, role: null });
   } catch (err) { /* ignore — their account may not exist anymore */ }
 };
+
+window.viewStudentDetail = function (studentId, studentName) {
+  state.teacherViewingStudent = { id: studentId, name: studentName };
+  render();
+};
+
+window.backToRoster = function () {
+  state.teacherViewingStudent = null;
+  render();
+};
+
+function renderStudentDetailView() {
+  const { id: studentId, name: studentName } = state.teacherViewingStudent;
+  const teacherId = state.user.uid;
+
+  el.innerHTML = `
+    <div class="app-shell">
+      <header class="page-header">
+        <h1 class="display">${studentName}</h1>
+        <button class="ghost" onclick="window.backToRoster()">← Back</button>
+      </header>
+      <section>
+        <h2>Unavailable dates</h2>
+        <p>Dates and times ${studentName} has marked they can't make a lesson.</p>
+        <div id="student-detail-list"><p>Loading…</p></div>
+      </section>
+    </div>`;
+
+  const unsub = onSnapshot(collection(db, 'users', teacherId, 'students', studentId, 'unavailableDates'), (snap) => {
+    const entries = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+    const box = document.getElementById('student-detail-list');
+    if (!box) return;
+    box.innerHTML = entries.length === 0
+      ? '<p>No unavailable dates marked.</p>'
+      : entries.map((e) => `<p style="margin:0 0 4px;">${e.date}, ${formatTime12(e.startTime)}–${formatTime12(e.endTime)}</p>`).join('');
+  });
+
+  state.unsubs.push(unsub);
+}
 
 window.confirmStudentRequest = async function (request) {
   await acceptConnectionRequest(request.id, request);
@@ -790,7 +846,8 @@ function renderStudentView() {
   const teacherId = state.profile.teacherId;
   const uid = state.user.uid;
   let myLesson = null;
-  let myStudentDoc = { recurringSlot: null, unavailableDates: [] };
+  let myStudentDoc = { recurringSlot: null };
+  let myUnavailableDates = [];
   let allTeacherStudents = [];
   let teacherWeeklySchedule = null;
   let teacherUnavailableBlocks = [];
@@ -850,19 +907,21 @@ function renderStudentView() {
   function renderUnavailableSection() {
     const box = document.getElementById('unavailable-section');
     if (!box) return;
-    const dates = (myStudentDoc.unavailableDates || []).slice().sort();
+    const sorted = myUnavailableDates.slice().sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
     box.innerHTML = `
       <section>
         <h2>Days you're not available</h2>
-        <p>Let your teacher know ahead of time which days you'll miss.</p>
+        <p>Let your teacher know ahead of time which dates and times you'll miss.</p>
         <form class="inline" onsubmit="window.addUnavailableDate(event)">
           <input id="unavailable-date-input" type="date" required />
+          <input id="unavailable-start-input" type="time" required />
+          <input id="unavailable-end-input" type="time" required />
           <button class="ghost" type="submit">Add</button>
         </form>
-        ${dates.length === 0 ? '' : dates.map((d) => `
+        ${sorted.length === 0 ? '' : sorted.map((e) => `
           <div class="student-row">
-            <span>${d}</span>
-            <button class="danger-link" onclick="window.removeUnavailableDate('${d}')">Remove</button>
+            <span>${e.date}, ${formatTime12(e.startTime)}–${formatTime12(e.endTime)}</span>
+            <button class="danger-link" onclick="window.removeUnavailableDate('${e.id}')">Remove</button>
           </div>`).join('')}
       </section>`;
   }
@@ -889,15 +948,26 @@ function renderStudentView() {
     renderMyLessonSection();
   };
 
+  let addingUnavailableDate = false;
   window.addUnavailableDate = async function (e) {
     e.preventDefault();
-    const val = document.getElementById('unavailable-date-input').value;
-    if (!val) return;
-    await updateDoc(doc(db, 'users', teacherId, 'students', uid), { unavailableDates: arrayUnion(val) });
+    if (addingUnavailableDate) return;
+    const date = document.getElementById('unavailable-date-input').value;
+    const startTime = document.getElementById('unavailable-start-input').value;
+    const endTime = document.getElementById('unavailable-end-input').value;
+    if (!date || !startTime || !endTime) return;
+    const isDuplicate = myUnavailableDates.some((d) => d.date === date && d.startTime === startTime && d.endTime === endTime);
+    if (isDuplicate) return;
+    addingUnavailableDate = true;
+    try {
+      await addDoc(collection(db, 'users', teacherId, 'students', uid, 'unavailableDates'), { date, startTime, endTime });
+    } finally {
+      addingUnavailableDate = false;
+    }
   };
 
-  window.removeUnavailableDate = async function (dateStr) {
-    await updateDoc(doc(db, 'users', teacherId, 'students', uid), { unavailableDates: arrayRemove(dateStr) });
+  window.removeUnavailableDate = async function (entryId) {
+    await deleteDoc(doc(db, 'users', teacherId, 'students', uid, 'unavailableDates', entryId));
   };
 
   function renderMyLessonSection() {
@@ -919,10 +989,14 @@ function renderStudentView() {
   }
 
   const unsubMyDoc = onSnapshot(doc(db, 'users', teacherId, 'students', uid), (snap) => {
-    myStudentDoc = snap.exists() ? { recurringSlot: null, unavailableDates: [], ...snap.data() } : myStudentDoc;
+    myStudentDoc = snap.exists() ? { recurringSlot: null, ...snap.data() } : myStudentDoc;
     renderLessonTimeSection();
-    renderUnavailableSection();
     renderMyLessonSection();
+  });
+
+  const unsubMyUnavailable = onSnapshot(collection(db, 'users', teacherId, 'students', uid, 'unavailableDates'), (snap) => {
+    myUnavailableDates = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderUnavailableSection();
   });
 
   const unsubTeacherDoc = onSnapshot(doc(db, 'users', teacherId), (snap) => {
@@ -1007,7 +1081,7 @@ function renderStudentView() {
     }
   });
 
-  state.unsubs.push(unsubMyDoc, unsubTeacherDoc, unsubAllStudents, unsubLesson, unsubUnavailableBlocks);
+  state.unsubs.push(unsubMyDoc, unsubMyUnavailable, unsubTeacherDoc, unsubAllStudents, unsubLesson, unsubUnavailableBlocks);
 }
 
 render();
