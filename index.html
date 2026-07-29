@@ -1012,31 +1012,48 @@ function renderStudentCalendarTab() {
   let allStudents = [];
   let weeklySchedule = null;
   let unavailableBlocks = [];
+  let expandedDate = null;
 
   function isTakenByAnyone(dayOfWeek, startTime) {
     return allStudents.some((s) => s.recurringSlot && s.recurringSlot.dayOfWeek === dayOfWeek && s.recurringSlot.startTime === startTime);
   }
+
+  window.openDayDetail = function (iso) { expandedDate = iso; draw(); };
+  window.closeDayDetail = function () { expandedDate = null; draw(); };
 
   function draw() {
     const box = document.getElementById('calendar-content');
     if (!box) return;
     const candidates = generateCandidateSlots(weeklySchedule);
 
-    function blocksForDate(d) {
+    function blocksForDate(d, verbose) {
       const dow = d.getDay();
       const iso = isoDate(d);
       const blocks = [];
       if (myStudentDoc.recurringSlot && myStudentDoc.recurringSlot.dayOfWeek === dow) {
-        blocks.push({ type: 'lesson', color: '#8C6D3F', label: `${formatTimeCompact(myStudentDoc.recurringSlot.startTime)} Lesson` });
+        const durationMin = myStudentDoc.recurringSlot.durationMinutes || 30;
+        const endTime = minutesToTime(timeToMinutes(myStudentDoc.recurringSlot.startTime) + durationMin);
+        const label = verbose
+          ? `Your lesson, ${formatTime12(myStudentDoc.recurringSlot.startTime)}–${formatTime12(endTime)}`
+          : `${formatTimeCompact(myStudentDoc.recurringSlot.startTime)} Lesson`;
+        blocks.push({ type: 'lesson', color: '#8C6D3F', label });
       }
       const freeSlots = candidates
         .filter((s) => s.dayOfWeek === dow && !isTakenByAnyone(s.dayOfWeek, s.startTime))
         .sort((a, b) => a.startTime.localeCompare(b.startTime));
       const slotLen = (weeklySchedule && weeklySchedule.slotLengthMinutes) || 30;
-      mergeFreeRanges(freeSlots, slotLen)
-        .forEach((r) => blocks.push({ type: 'free', label: `${formatTimeCompact(r.startTime)}–${formatTimeCompact(r.endTime)}` }));
-      unavailableBlocks.filter((b) => b.date === iso)
-        .forEach((b) => blocks.push({ type: 'unavailable', label: `${formatTimeCompact(b.startTime)}–${formatTimeCompact(b.endTime)}` }));
+      mergeFreeRanges(freeSlots, slotLen).forEach((r) => {
+        const label = verbose
+          ? `Teacher free, ${formatTime12(r.startTime)}–${formatTime12(r.endTime)}`
+          : `${formatTimeCompact(r.startTime)}–${formatTimeCompact(r.endTime)}`;
+        blocks.push({ type: 'free', label });
+      });
+      unavailableBlocks.filter((b) => b.date === iso).forEach((b) => {
+        const label = verbose
+          ? `Teacher unavailable, ${formatTime12(b.startTime)}–${formatTime12(b.endTime)}`
+          : `${formatTimeCompact(b.startTime)}–${formatTimeCompact(b.endTime)}`;
+        blocks.push({ type: 'unavailable', label });
+      });
       return blocks;
     }
     function dotsForDate(d) {
@@ -1047,6 +1064,19 @@ function renderStudentCalendarTab() {
       if (unavailableBlocks.some((b) => b.date === iso)) dots.push('#9aa0a8');
       return dots;
     }
+    function dayDetailHtml(iso) {
+      const d = new Date(iso + 'T00:00:00');
+      const blocksFull = blocksForDate(d, true);
+      return `
+        <div class="day-detail-overlay" onclick="window.closeDayDetail()"></div>
+        <div class="day-detail-panel">
+          <div class="day-detail-panel-header">
+            <h2 class="display" style="font-size:18px;">${d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</h2>
+            <button class="ghost" onclick="window.closeDayDetail()">Close</button>
+          </div>
+          ${blocksFull.length === 0 ? '<p>No events.</p>' : blocksFull.map((b) => `<div class="day-detail-event">${b.label}</div>`).join('')}
+        </div>`;
+    }
 
     box.innerHTML = calendarToolbarHtml() + `
       <div class="calendar-legend">
@@ -1054,7 +1084,10 @@ function renderStudentCalendarTab() {
         <span><span class="legend-dot" style="background:transparent; border:1px dashed var(--sage);"></span>Teacher free</span>
         <span><span class="legend-dot" style="background:#9aa0a8;"></span>Teacher unavailable</span>
       </div>
-      ${state.calendarView === 'week' ? weekGridHtml(blocksForDate) : monthGridHtml(dotsForDate)}`;
+      ${state.calendarView === 'week'
+        ? weekGridHtml((d) => blocksForDate(d, false), (d) => `window.openDayDetail('${isoDate(d)}')`)
+        : monthGridHtml(dotsForDate)}
+      ${expandedDate ? dayDetailHtml(expandedDate) : ''}`;
   }
 
   const unsubMyDoc = onSnapshot(doc(db, 'users', teacherId, 'students', uid), (snap) => {
