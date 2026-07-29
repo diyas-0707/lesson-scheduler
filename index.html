@@ -324,6 +324,30 @@ function colorForStudent(studentId) {
   return STUDENT_COLORS[Math.abs(hash)];
 }
 
+/** Collapses back-to-back free slots (e.g. 3:00, 3:30, 4:00...) into a
+ *  single range (3:00–4:30), breaking into separate ranges wherever a
+ *  taken slot interrupts the sequence. Expects slots pre-sorted by time. */
+function mergeFreeRanges(sortedFreeSlots, slotLenMinutes) {
+  const ranges = [];
+  let rangeStartMin = null;
+  let rangeEndMin = null;
+  sortedFreeSlots.forEach((s) => {
+    const startMin = timeToMinutes(s.startTime);
+    if (rangeStartMin === null) {
+      rangeStartMin = startMin;
+      rangeEndMin = startMin + slotLenMinutes;
+    } else if (startMin === rangeEndMin) {
+      rangeEndMin = startMin + slotLenMinutes;
+    } else {
+      ranges.push({ startTime: minutesToTime(rangeStartMin), endTime: minutesToTime(rangeEndMin) });
+      rangeStartMin = startMin;
+      rangeEndMin = startMin + slotLenMinutes;
+    }
+  });
+  if (rangeStartMin !== null) ranges.push({ startTime: minutesToTime(rangeStartMin), endTime: minutesToTime(rangeEndMin) });
+  return ranges;
+}
+
 // ---------- Auth wiring ----------
 onAuthStateChanged(auth, async (firebaseUser) => {
   clearUnsubs();
@@ -897,8 +921,12 @@ function renderStudentCalendarTab() {
       if (myStudentDoc.recurringSlot && myStudentDoc.recurringSlot.dayOfWeek === dow) {
         blocks.push({ type: 'lesson', color: '#8C6D3F', label: `${formatTime12(myStudentDoc.recurringSlot.startTime)} My lesson` });
       }
-      candidates.filter((s) => s.dayOfWeek === dow && !isTakenByAnyone(s.dayOfWeek, s.startTime))
-        .forEach((s) => blocks.push({ type: 'free', label: `${formatTime12(s.startTime)} Free` }));
+      const freeSlots = candidates
+        .filter((s) => s.dayOfWeek === dow && !isTakenByAnyone(s.dayOfWeek, s.startTime))
+        .sort((a, b) => a.startTime.localeCompare(b.startTime));
+      const slotLen = (weeklySchedule && weeklySchedule.slotLengthMinutes) || 30;
+      mergeFreeRanges(freeSlots, slotLen)
+        .forEach((r) => blocks.push({ type: 'free', label: `${formatTime12(r.startTime)}–${formatTime12(r.endTime)} Free` }));
       unavailableBlocks.filter((b) => b.date === iso)
         .forEach((b) => blocks.push({ type: 'unavailable', label: `${formatTime12(b.startTime)}–${formatTime12(b.endTime)}` }));
       return blocks;
