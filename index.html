@@ -8,6 +8,7 @@
 <link rel="manifest" href="manifest.json" />
 <meta name="theme-color" content="#8C6D3F" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="apple-mobile-web-app-title" content="Lesson Sched" />
@@ -202,12 +203,14 @@ const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const DAY_LETTERS = ['S','M','T','W','T','F','S'];
 const FULL_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 const TEACHER_TABS = [
+  { id: 'home', label: 'Home' },
   { id: 'calendar', label: 'Calendar' },
   { id: 'students', label: 'Students' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'settings', label: 'Settings' }
 ];
 const STUDENT_TABS = [
+  { id: 'home', label: 'Home' },
   { id: 'calendar', label: 'Calendar' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'settings', label: 'Settings' }
@@ -698,18 +701,20 @@ function render() {
 
   if (state.profile.role === 'teacher') {
     if (state.teacherViewingStudent) { renderStudentDetailView(); return; }
-    if (!TEACHER_TABS.some((t) => t.id === state.activeTab)) state.activeTab = 'calendar';
+    if (!TEACHER_TABS.some((t) => t.id === state.activeTab)) state.activeTab = 'home';
     if (state.activeTab === 'students') { renderTeacherStudentsTab(); return; }
     if (state.activeTab === 'schedule') { renderTeacherScheduleTab(); return; }
     if (state.activeTab === 'settings') { renderSettingsTab(); return; }
-    renderTeacherCalendarTab();
+    if (state.activeTab === 'calendar') { renderTeacherCalendarTab(); return; }
+    renderTeacherHomeTab();
     return;
   }
 
-  if (!STUDENT_TABS.some((t) => t.id === state.activeTab)) state.activeTab = 'calendar';
+  if (!STUDENT_TABS.some((t) => t.id === state.activeTab)) state.activeTab = 'home';
   if (state.activeTab === 'schedule') { renderStudentScheduleTab(); return; }
   if (state.activeTab === 'settings') { renderSettingsTab(); return; }
-  renderStudentCalendarTab();
+  if (state.activeTab === 'calendar') { renderStudentCalendarTab(); return; }
+  renderStudentHomeTab();
 }
 
 function renderLogin() {
@@ -1399,93 +1404,17 @@ function renderStudentDetailView() {
 }
 
 // ---------- Teacher: Schedule tab ----------
-function renderTeacherScheduleTab() {
+function renderTeacherHomeTab() {
   el.innerHTML = `
     <div class="app-shell">
-      ${topbarHtml('Schedule')}
+      ${topbarHtml('Home')}
       ${renderDrawer()}
-      <div id="teacher-availability-section"></div>
       <div id="upcoming-lessons-section"></div>
       <div id="student-requests-section"></div>
-      <div id="reschedule-requests-section"></div>
     </div>`;
 
   const teacherId = state.user.uid;
   let teacherUnavailableBlocks = [];
-
-  function renderTeacherScheduleSection() {
-    const box = document.getElementById('teacher-availability-section');
-    if (!box) return;
-    const ws = state.profile.weeklySchedule || { activeDays: [], startTime: '15:00', endTime: '18:00', slotLengthMinutes: 30 };
-    const sortedBlocks = teacherUnavailableBlocks.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.startTime.localeCompare(b.startTime));
-
-    box.innerHTML = `
-      <section>
-        <h2>Weekly teaching hours</h2>
-        <p>Which days you teach, and your general window on those days.</p>
-        <div class="day-pills">
-          ${DAY_LETTERS.map((letter, i) => `
-            <button type="button" class="day-pill ${ws.activeDays.includes(i) ? 'selected' : ''}" onclick="window.toggleActiveDay(${i})">${letter}</button>`).join('')}
-        </div>
-        <form class="inline" onsubmit="window.saveWeeklySchedule(event)">
-          <input id="ws-start" type="time" value="${ws.startTime}" required />
-          <input id="ws-end" type="time" value="${ws.endTime}" required />
-          <select id="ws-slot-length">
-            <option value="30" ${ws.slotLengthMinutes === 30 ? 'selected' : ''}>30 min</option>
-            <option value="45" ${ws.slotLengthMinutes === 45 ? 'selected' : ''}>45 min</option>
-            <option value="60" ${ws.slotLengthMinutes === 60 ? 'selected' : ''}>60 min</option>
-          </select>
-          <button class="ghost" type="submit">Save</button>
-        </form>
-      </section>
-
-      <section>
-        <h2>Mark times you're unavailable</h2>
-        <p>Pick a specific date, then a time range to block off (e.g. a recital, a day off).</p>
-        <form class="inline" onsubmit="window.addUnavailableBlock(event)">
-          <input id="block-date" type="date" required />
-          <input id="block-start" type="time" required />
-          <input id="block-end" type="time" required />
-          <button class="ghost" type="submit">Add</button>
-        </form>
-        ${sortedBlocks.length === 0 ? '' : sortedBlocks.map((b) => `
-          <div class="student-row">
-            <span>${b.date ? `${b.date} ${formatTime12(b.startTime)}–${formatTime12(b.endTime)}` : `${DAYS[b.dayOfWeek]} ${formatTime12(b.startTime)}–${formatTime12(b.endTime)} (old format)`}</span>
-            <button class="danger-link" onclick="window.deleteUnavailableBlock('${b.id}')">Remove</button>
-          </div>`).join('')}
-      </section>`;
-  }
-
-  const unsubUnavailable = onSnapshot(collection(db, 'users', state.user.uid, 'unavailableBlocks'), (snap) => {
-    teacherUnavailableBlocks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    renderTeacherScheduleSection();
-  });
-
-  let addingUnavailableBlock = false;
-  window.addUnavailableBlock = async function (e) {
-    e.preventDefault();
-    if (addingUnavailableBlock) return;
-    const date = document.getElementById('block-date').value;
-    const startTime = document.getElementById('block-start').value;
-    const endTime = document.getElementById('block-end').value;
-    if (!date || !startTime || !endTime) return;
-    const isDuplicate = teacherUnavailableBlocks.some((b) => b.date === date && b.startTime === startTime && b.endTime === endTime);
-    if (isDuplicate) return;
-    addingUnavailableBlock = true;
-    try {
-      await addDoc(collection(db, 'users', state.user.uid, 'unavailableBlocks'), { date, startTime, endTime });
-    } finally {
-      addingUnavailableBlock = false;
-    }
-  };
-
-  window.deleteUnavailableBlock = async function (blockId) {
-    await deleteDoc(doc(db, 'users', state.user.uid, 'unavailableBlocks', blockId));
-  };
-
-  renderTeacherScheduleSection();
-
-  // ---- Reschedule requests students have sent to the teacher ----
   let studentsForProposals = [];
   let studentProposalsMap2 = {};
   let studentProposalListeners2 = {};
@@ -1628,6 +1557,11 @@ function renderTeacherScheduleTab() {
     await confirmProposedTime(teacherId, studentId, proposalId, accept);
   };
 
+  const unsubTeacherUnavailForHome = onSnapshot(collection(db, 'users', teacherId, 'unavailableBlocks'), (snap) => {
+    teacherUnavailableBlocks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderStudentRequestsSection();
+  });
+
   const unsubStudentsForProposals = onSnapshot(collection(db, 'users', teacherId, 'students'), (snap) => {
     studentsForProposals = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     const currentIds = new Set(studentsForProposals.map((s) => s.id));
@@ -1637,6 +1571,93 @@ function renderTeacherScheduleTab() {
     renderStudentRequestsSection();
     renderUpcomingLessonsSection();
   });
+
+  state.unsubs.push(unsubTeacherUnavailForHome, unsubStudentsForProposals);
+}
+
+function renderTeacherScheduleTab() {
+  el.innerHTML = `
+    <div class="app-shell">
+      ${topbarHtml('Schedule')}
+      ${renderDrawer()}
+      <div id="teacher-availability-section"></div>
+      <div id="reschedule-requests-section"></div>
+    </div>`;
+
+  const teacherId = state.user.uid;
+  let teacherUnavailableBlocks = [];
+
+  function renderTeacherScheduleSection() {
+    const box = document.getElementById('teacher-availability-section');
+    if (!box) return;
+    const ws = state.profile.weeklySchedule || { activeDays: [], startTime: '15:00', endTime: '18:00', slotLengthMinutes: 30 };
+    const sortedBlocks = teacherUnavailableBlocks.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.startTime.localeCompare(b.startTime));
+
+    box.innerHTML = `
+      <section>
+        <h2>Weekly teaching hours</h2>
+        <p>Which days you teach, and your general window on those days.</p>
+        <div class="day-pills">
+          ${DAY_LETTERS.map((letter, i) => `
+            <button type="button" class="day-pill ${ws.activeDays.includes(i) ? 'selected' : ''}" onclick="window.toggleActiveDay(${i})">${letter}</button>`).join('')}
+        </div>
+        <form class="inline" onsubmit="window.saveWeeklySchedule(event)">
+          <input id="ws-start" type="time" value="${ws.startTime}" required />
+          <input id="ws-end" type="time" value="${ws.endTime}" required />
+          <select id="ws-slot-length">
+            <option value="30" ${ws.slotLengthMinutes === 30 ? 'selected' : ''}>30 min</option>
+            <option value="45" ${ws.slotLengthMinutes === 45 ? 'selected' : ''}>45 min</option>
+            <option value="60" ${ws.slotLengthMinutes === 60 ? 'selected' : ''}>60 min</option>
+          </select>
+          <button class="ghost" type="submit">Save</button>
+        </form>
+      </section>
+
+      <section>
+        <h2>Mark times you're unavailable</h2>
+        <p>Pick a specific date, then a time range to block off (e.g. a recital, a day off).</p>
+        <form class="inline" onsubmit="window.addUnavailableBlock(event)">
+          <input id="block-date" type="date" required />
+          <input id="block-start" type="time" required />
+          <input id="block-end" type="time" required />
+          <button class="ghost" type="submit">Add</button>
+        </form>
+        ${sortedBlocks.length === 0 ? '' : sortedBlocks.map((b) => `
+          <div class="student-row">
+            <span>${b.date ? `${b.date} ${formatTime12(b.startTime)}–${formatTime12(b.endTime)}` : `${DAYS[b.dayOfWeek]} ${formatTime12(b.startTime)}–${formatTime12(b.endTime)} (old format)`}</span>
+            <button class="danger-link" onclick="window.deleteUnavailableBlock('${b.id}')">Remove</button>
+          </div>`).join('')}
+      </section>`;
+  }
+
+  const unsubUnavailable = onSnapshot(collection(db, 'users', state.user.uid, 'unavailableBlocks'), (snap) => {
+    teacherUnavailableBlocks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderTeacherScheduleSection();
+  });
+
+  let addingUnavailableBlock = false;
+  window.addUnavailableBlock = async function (e) {
+    e.preventDefault();
+    if (addingUnavailableBlock) return;
+    const date = document.getElementById('block-date').value;
+    const startTime = document.getElementById('block-start').value;
+    const endTime = document.getElementById('block-end').value;
+    if (!date || !startTime || !endTime) return;
+    const isDuplicate = teacherUnavailableBlocks.some((b) => b.date === date && b.startTime === startTime && b.endTime === endTime);
+    if (isDuplicate) return;
+    addingUnavailableBlock = true;
+    try {
+      await addDoc(collection(db, 'users', state.user.uid, 'unavailableBlocks'), { date, startTime, endTime });
+    } finally {
+      addingUnavailableBlock = false;
+    }
+  };
+
+  window.deleteUnavailableBlock = async function (blockId) {
+    await deleteDoc(doc(db, 'users', state.user.uid, 'unavailableBlocks', blockId));
+  };
+
+  renderTeacherScheduleSection();
 
   const unsubRequests = onSnapshot(collection(db, 'users', state.user.uid, 'rescheduleRequests'), (snap) => {
     const requests = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((r) => r.status === 'pending');
@@ -1656,7 +1677,7 @@ function renderTeacherScheduleTab() {
       </section>`;
   });
 
-  state.unsubs.push(unsubUnavailable, unsubRequests, unsubStudentsForProposals);
+  state.unsubs.push(unsubUnavailable, unsubRequests);
 }
 
 window.toggleActiveDay = async function (dayIndex) {
@@ -1689,17 +1710,14 @@ window.respondReschedule = async function (requestId, approve) {
 };
 
 // ---------- Student: Schedule tab ----------
-function renderStudentScheduleTab() {
+function renderStudentHomeTab() {
   el.innerHTML = `
     <div class="app-shell">
-      ${topbarHtml('Schedule')}
+      ${topbarHtml('Home')}
       ${renderDrawer()}
       <div id="reschedule-proposal-section"></div>
       <div id="my-lesson-section"><section><h2>Upcoming lesson</h2><p>Loading…</p></section></div>
       <div id="teacher-unavailable-section"></div>
-      <div id="lesson-time-section"></div>
-      <div id="unavailable-section"></div>
-      <div id="reschedule-picker-section"></div>
     </div>`;
 
   if (!state.profile.teacherId) {
@@ -1716,9 +1734,8 @@ function renderStudentScheduleTab() {
   let allTeacherStudents = [];
   let teacherWeeklySchedule = null;
   let teacherUnavailableBlocks = [];
-  let showSlotPicker = false;
-  let pickerDay = null;
-  let reschedulePickerDay = null;
+  let myProposals = [];
+  let proposalPickerState = {};
 
   function isSlotTaken(dayOfWeek, startTime) {
     return allTeacherStudents.some((s) =>
@@ -1730,9 +1747,6 @@ function renderStudentScheduleTab() {
   function candidateSlots() {
     return generateCandidateSlots(teacherWeeklySchedule);
   }
-
-  let myProposals = [];
-  let proposalPickerState = {};
 
   function computeProposalSlotsHtml(proposalId, chosenDate) {
     if (!chosenDate) return '';
@@ -1798,6 +1812,124 @@ function renderStudentScheduleTab() {
     await confirmProposedTime(teacherId, uid, proposalId, accept);
   };
 
+  function renderMyLessonSection() {
+    const box = document.getElementById('my-lesson-section');
+    if (!box) return;
+    let line;
+    if (myLesson) {
+      line = `${myLesson.date} at ${formatTime12(myLesson.startTime)}${myLesson.status === 'pending_reschedule' ? ' (reschedule pending teacher approval)' : ''}`;
+    } else if (myStudentDoc.recurringSlot) {
+      const nextDate = nextOccurrenceDate(myStudentDoc.recurringSlot.dayOfWeek);
+      const nextIso = isoDate(nextDate);
+      const override = myProposals.find((p) => p.status === 'confirmed' && p.originalDate === nextIso);
+      if (override) {
+        const d = new Date(override.proposedDate + 'T00:00:00');
+        const dateStr = `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+        line = `Lesson on ${FULL_DAYS[d.getDay()]}, ${dateStr} at ${formatTime12(override.proposedStartTime)} (rescheduled)`;
+      } else {
+        line = formatUpcomingLessonLine(myStudentDoc.recurringSlot.dayOfWeek, myStudentDoc.recurringSlot.startTime);
+      }
+    } else {
+      line = null;
+    }
+    box.innerHTML = `
+      <section>
+        <h2>Upcoming lesson</h2>
+        ${line ? `<p>${line}</p>` : `<p>No upcoming lesson scheduled yet — check with your teacher.</p>`}
+      </section>`;
+  }
+
+  const unsubMyDoc = onSnapshot(doc(db, 'users', teacherId, 'students', uid), (snap) => {
+    myStudentDoc = snap.exists() ? { recurringSlot: null, ...snap.data() } : myStudentDoc;
+    renderMyLessonSection();
+  });
+
+  const unsubMyUnavailable = onSnapshot(collection(db, 'users', teacherId, 'students', uid, 'unavailableDates'), (snap) => {
+    myUnavailableDates = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  });
+
+  const unsubTeacherDoc = onSnapshot(doc(db, 'users', teacherId), (snap) => {
+    teacherWeeklySchedule = snap.exists() ? snap.data().weeklySchedule : null;
+  });
+
+  const unsubAllStudents = onSnapshot(collection(db, 'users', teacherId, 'students'), (snap) => {
+    allTeacherStudents = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  });
+
+  const lessonsQ = query(collection(db, 'users', teacherId, 'lessons'), where('studentId', '==', uid));
+  const unsubLesson = onSnapshot(lessonsQ, (snap) => {
+    const upcoming = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((l) => l.status !== 'cancelled')
+      .sort((a, b) => new Date(a.date) - new Date(b.date))[0];
+    myLesson = upcoming || null;
+    renderMyLessonSection();
+  });
+
+  const unsubUnavailableBlocks = onSnapshot(collection(db, 'users', teacherId, 'unavailableBlocks'), (snap) => {
+    teacherUnavailableBlocks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const upcoming = teacherUnavailableBlocks
+      .filter((b) => b.date >= todayStr)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+    const box = document.getElementById('teacher-unavailable-section');
+    if (box) {
+      box.innerHTML = upcoming.length === 0 ? '' : `
+        <section>
+          <h2>Your teacher is unavailable</h2>
+          ${upcoming.map((b) => `<p style="margin:0 0 4px;">${b.date}, ${formatTime12(b.startTime)}–${formatTime12(b.endTime)}</p>`).join('')}
+        </section>`;
+    }
+  });
+
+  const unsubProposals = onSnapshot(collection(db, 'users', teacherId, 'students', uid, 'rescheduleProposals'), (snap) => {
+    myProposals = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    renderProposalsSection();
+    renderMyLessonSection();
+  });
+
+  state.unsubs.push(unsubMyDoc, unsubMyUnavailable, unsubTeacherDoc, unsubAllStudents, unsubLesson, unsubUnavailableBlocks, unsubProposals);
+}
+
+function renderStudentScheduleTab() {
+  el.innerHTML = `
+    <div class="app-shell">
+      ${topbarHtml('Schedule')}
+      ${renderDrawer()}
+      <div id="lesson-time-section"></div>
+      <div id="unavailable-section"></div>
+      <div id="reschedule-picker-section"></div>
+    </div>`;
+
+  if (!state.profile.teacherId) {
+    document.getElementById('lesson-time-section').innerHTML = `
+      <section><h2>Choose your lesson time</h2><p>Connect with your teacher first.</p></section>`;
+    return;
+  }
+
+  const teacherId = state.profile.teacherId;
+  const uid = state.user.uid;
+  let myLesson = null;
+  let myStudentDoc = { recurringSlot: null };
+  let myUnavailableDates = [];
+  let allTeacherStudents = [];
+  let teacherWeeklySchedule = null;
+  let showSlotPicker = false;
+  let pickerDay = null;
+  let reschedulePickerDay = null;
+
+  function isSlotTaken(dayOfWeek, startTime) {
+    return allTeacherStudents.some((s) =>
+      s.id !== uid && s.recurringSlot &&
+      s.recurringSlot.dayOfWeek === dayOfWeek && s.recurringSlot.startTime === startTime
+    );
+  }
+
+  function candidateSlots() {
+    return generateCandidateSlots(teacherWeeklySchedule);
+  }
+
   function renderLessonTimeSection() {
     const box = document.getElementById('lesson-time-section');
     if (!box) return;
@@ -1856,33 +1988,6 @@ function renderStudentScheduleTab() {
       </section>`;
   }
 
-  function renderMyLessonSection() {
-    const box = document.getElementById('my-lesson-section');
-    if (!box) return;
-    let line;
-    if (myLesson) {
-      line = `${myLesson.date} at ${formatTime12(myLesson.startTime)}${myLesson.status === 'pending_reschedule' ? ' (reschedule pending teacher approval)' : ''}`;
-    } else if (myStudentDoc.recurringSlot) {
-      const nextDate = nextOccurrenceDate(myStudentDoc.recurringSlot.dayOfWeek);
-      const nextIso = isoDate(nextDate);
-      const override = myProposals.find((p) => p.status === 'confirmed' && p.originalDate === nextIso);
-      if (override) {
-        const d = new Date(override.proposedDate + 'T00:00:00');
-        const dateStr = `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
-        line = `Lesson on ${FULL_DAYS[d.getDay()]}, ${dateStr} at ${formatTime12(override.proposedStartTime)} (rescheduled)`;
-      } else {
-        line = formatUpcomingLessonLine(myStudentDoc.recurringSlot.dayOfWeek, myStudentDoc.recurringSlot.startTime);
-      }
-    } else {
-      line = null;
-    }
-    box.innerHTML = `
-      <section>
-        <h2>Upcoming lesson</h2>
-        ${line ? `<p>${line}</p>` : `<p>No upcoming lesson scheduled yet — check with your teacher.</p>`}
-      </section>`;
-  }
-
   window.toggleSlotPicker = function () {
     showSlotPicker = !showSlotPicker;
     pickerDay = null;
@@ -1902,7 +2007,6 @@ function renderStudentScheduleTab() {
     showSlotPicker = false;
     pickerDay = null;
     renderLessonTimeSection();
-    renderMyLessonSection();
   };
 
   let addingUnavailableDate = false;
@@ -1930,7 +2034,6 @@ function renderStudentScheduleTab() {
   const unsubMyDoc = onSnapshot(doc(db, 'users', teacherId, 'students', uid), (snap) => {
     myStudentDoc = snap.exists() ? { recurringSlot: null, ...snap.data() } : myStudentDoc;
     renderLessonTimeSection();
-    renderMyLessonSection();
   });
 
   const unsubMyUnavailable = onSnapshot(collection(db, 'users', teacherId, 'students', uid, 'unavailableDates'), (snap) => {
@@ -1956,7 +2059,6 @@ function renderStudentScheduleTab() {
       .filter((l) => l.status !== 'cancelled')
       .sort((a, b) => new Date(a.date) - new Date(b.date))[0];
     myLesson = upcoming || null;
-    renderMyLessonSection();
     renderReschedulePicker();
   });
 
@@ -1998,32 +2100,10 @@ function renderStudentScheduleTab() {
     alert(result.autoApplied ? 'Lesson moved!' : "Sent to your teacher for approval — you're close to the cutoff window.");
   };
 
-  const unsubUnavailableBlocks = onSnapshot(collection(db, 'users', teacherId, 'unavailableBlocks'), (snap) => {
-    teacherUnavailableBlocks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    renderLessonTimeSection();
-    renderReschedulePicker();
+  renderLessonTimeSection();
+  renderUnavailableSection();
 
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const upcoming = teacherUnavailableBlocks
-      .filter((b) => b.date >= todayStr)
-      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
-    const box = document.getElementById('teacher-unavailable-section');
-    if (box) {
-      box.innerHTML = upcoming.length === 0 ? '' : `
-        <section>
-          <h2>Your teacher is unavailable</h2>
-          ${upcoming.map((b) => `<p style="margin:0 0 4px;">${b.date}, ${formatTime12(b.startTime)}–${formatTime12(b.endTime)}</p>`).join('')}
-        </section>`;
-    }
-  });
-
-  const unsubProposals = onSnapshot(collection(db, 'users', teacherId, 'students', uid, 'rescheduleProposals'), (snap) => {
-    myProposals = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    renderProposalsSection();
-    renderMyLessonSection();
-  });
-
-  state.unsubs.push(unsubMyDoc, unsubMyUnavailable, unsubTeacherDoc, unsubAllStudents, unsubLesson, unsubUnavailableBlocks, unsubProposals);
+  state.unsubs.push(unsubMyDoc, unsubMyUnavailable, unsubTeacherDoc, unsubAllStudents, unsubLesson);
 }
 
 render();
