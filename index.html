@@ -560,12 +560,6 @@ function renderTeacherDashboard() {
       <div id="connection-requests-section"></div>
       <div id="teacher-availability-section"></div>
 
-      <section>
-        <h2>Reschedule cutoff</h2>
-        <p>Requests inside this window need your approval; outside it, students can rebook freely.</p>
-        <input id="cutoff-input" type="number" value="${state.profile.rescheduleCutoffHours ?? 48}" onblur="window.saveCutoff(this.value)" /> hours
-      </section>
-
       <div id="reschedule-requests-section"></div>
       <div id="students-section"></div>
       <div id="delete-account-mount"></div>
