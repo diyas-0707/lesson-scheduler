@@ -160,6 +160,21 @@ function formatTime12(t) {
   return `${h}:${mStr} ${ampm}`;
 }
 
+const FULL_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+/** Next calendar date (today included) matching the given weekday. */
+function nextOccurrenceDate(dayOfWeek) {
+  const now = new Date();
+  const diff = (dayOfWeek - now.getDay() + 7) % 7;
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff);
+}
+
+function formatUpcomingLessonLine(dayOfWeek, startTime) {
+  const d = nextOccurrenceDate(dayOfWeek);
+  const dateStr = `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+  return `Lesson on ${FULL_DAYS[dayOfWeek]}, ${dateStr} at ${formatTime12(startTime)}`;
+}
+
 /** Turns the teacher's weekly teaching window into individual bookable
  *  recurring slots (unavailable dates are one-off exceptions, shown
  *  separately, and don't remove a slot from the permanent weekly pool). */
@@ -654,13 +669,24 @@ function renderTeacherDashboard() {
     renderTeacherScheduleSection();
   });
 
+  let addingUnavailableBlock = false;
   window.addUnavailableBlock = async function (e) {
     e.preventDefault();
+    if (addingUnavailableBlock) return;
     const date = document.getElementById('block-date').value;
     const startTime = document.getElementById('block-start').value;
     const endTime = document.getElementById('block-end').value;
     if (!date || !startTime || !endTime) return;
-    await addDoc(collection(db, 'users', state.user.uid, 'unavailableBlocks'), { date, startTime, endTime });
+    const isDuplicate = teacherUnavailableBlocks.some((b) =>
+      b.date === date && b.startTime === startTime && b.endTime === endTime
+    );
+    if (isDuplicate) return;
+    addingUnavailableBlock = true;
+    try {
+      await addDoc(collection(db, 'users', state.user.uid, 'unavailableBlocks'), { date, startTime, endTime });
+    } finally {
+      addingUnavailableBlock = false;
+    }
   };
 
   window.deleteUnavailableBlock = async function (blockId) {
@@ -860,6 +886,7 @@ function renderStudentView() {
     showSlotPicker = false;
     pickerDay = null;
     renderLessonTimeSection();
+    renderMyLessonSection();
   };
 
   window.addUnavailableDate = async function (e) {
@@ -873,10 +900,29 @@ function renderStudentView() {
     await updateDoc(doc(db, 'users', teacherId, 'students', uid), { unavailableDates: arrayRemove(dateStr) });
   };
 
+  function renderMyLessonSection() {
+    const box = document.getElementById('my-lesson-section');
+    if (!box) return;
+    let line;
+    if (myLesson) {
+      line = `${myLesson.date} at ${formatTime12(myLesson.startTime)}${myLesson.status === 'pending_reschedule' ? ' (reschedule pending teacher approval)' : ''}`;
+    } else if (myStudentDoc.recurringSlot) {
+      line = formatUpcomingLessonLine(myStudentDoc.recurringSlot.dayOfWeek, myStudentDoc.recurringSlot.startTime);
+    } else {
+      line = null;
+    }
+    box.innerHTML = `
+      <section>
+        <h2>Upcoming lesson</h2>
+        ${line ? `<p>${line}</p>` : `<p>No upcoming lesson scheduled yet — check with your teacher.</p>`}
+      </section>`;
+  }
+
   const unsubMyDoc = onSnapshot(doc(db, 'users', teacherId, 'students', uid), (snap) => {
     myStudentDoc = snap.exists() ? { recurringSlot: null, unavailableDates: [], ...snap.data() } : myStudentDoc;
     renderLessonTimeSection();
     renderUnavailableSection();
+    renderMyLessonSection();
   });
 
   const unsubTeacherDoc = onSnapshot(doc(db, 'users', teacherId), (snap) => {
@@ -897,16 +943,7 @@ function renderStudentView() {
       .filter((l) => l.status !== 'cancelled')
       .sort((a, b) => new Date(a.date) - new Date(b.date))[0];
     myLesson = upcoming || null;
-    const box = document.getElementById('my-lesson-section');
-    if (box) {
-      box.innerHTML = `
-        <section>
-          <h2>Upcoming lesson</h2>
-          ${myLesson
-            ? `<p>${myLesson.date} at ${formatTime12(myLesson.startTime)}${myLesson.status === 'pending_reschedule' ? ' (reschedule pending teacher approval)' : ''}</p>`
-            : `<p>No upcoming lesson scheduled yet — check with your teacher.</p>`}
-        </section>`;
-    }
+    renderMyLessonSection();
     renderReschedulePicker();
   });
 
