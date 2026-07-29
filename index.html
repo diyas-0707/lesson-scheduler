@@ -86,7 +86,7 @@
   .request-card > div { display: flex; gap: 8px; }
   .error { color: #A94438; font-size: 13px; margin-top: 8px; }
   .ok { color: var(--sage); font-size: 13px; margin-top: 8px; }
-  .slot-chip { display: inline-flex; margin: 4px 6px 0 0; background: var(--paper); border: 1px solid var(--sage); color: var(--sage); font-family: 'IBM Plex Mono', monospace; font-size: 13px; padding: 7px 12px; }
+  .slot-chip { display: inline-flex; margin: 4px 6px 0 0; background: var(--paper); border: 1px solid var(--sage); color: var(--sage); font-family: 'IBM Plex Mono', monospace; font-size: 13px; padding: 7px 12px; white-space: nowrap; }
   .slot-chip:hover { background: var(--sage); color: #fff; }
   .slot-chip:disabled { border-color: var(--rule); color: var(--ink-soft); background: transparent; }
   form.inline { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -1396,6 +1396,7 @@ function renderTeacherScheduleTab() {
       ${topbarHtml('Schedule')}
       ${renderDrawer()}
       <div id="teacher-availability-section"></div>
+      <div id="upcoming-lessons-section"></div>
       <div id="student-requests-section"></div>
       <div id="reschedule-requests-section"></div>
     </div>`;
@@ -1488,6 +1489,7 @@ function renderTeacherScheduleTab() {
     const unsub = onSnapshot(collection(db, 'users', teacherId, 'students', studentId, 'rescheduleProposals'), (snap) => {
       studentProposalsMap2[studentId] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       renderStudentRequestsSection();
+      renderUpcomingLessonsSection();
     });
     studentProposalListeners2[studentId] = unsub;
     state.unsubs.push(unsub);
@@ -1534,6 +1536,39 @@ function renderTeacherScheduleTab() {
     return openSlots.length === 0
       ? '<p>No open times that day.</p>'
       : openSlots.map((s) => `<button class="slot-chip" onclick="window.teacherSubmitProposedTime('${studentId}', '${proposalId}', '${chosenDate}', '${s.startTime}')">${formatTime12(s.startTime)}</button>`).join('');
+  }
+
+  function renderUpcomingLessonsSection() {
+    const box = document.getElementById('upcoming-lessons-section');
+    if (!box) return;
+    const entries = [];
+    studentsForProposals.forEach((s) => {
+      if (!s.recurringSlot) return;
+      const nextDate = nextOccurrenceDate(s.recurringSlot.dayOfWeek);
+      const nextIso = isoDate(nextDate);
+      const override = (studentProposalsMap2[s.id] || []).find((p) => p.status === 'confirmed' && p.originalDate === nextIso);
+      let d, startTime, rescheduled;
+      if (override) {
+        d = new Date(override.proposedDate + 'T00:00:00');
+        startTime = override.proposedStartTime;
+        rescheduled = true;
+      } else {
+        d = nextDate;
+        startTime = s.recurringSlot.startTime;
+        rescheduled = false;
+      }
+      entries.push({ studentName: s.name, d, startTime, rescheduled });
+    });
+    entries.sort((a, b) => a.d - b.d || a.startTime.localeCompare(b.startTime));
+    box.innerHTML = `
+      <section>
+        <h2>Upcoming lessons</h2>
+        ${entries.length === 0 ? '<p>No lessons scheduled yet.</p>' : entries.map((e) => `
+          <div class="student-row">
+            <span>${e.studentName}</span>
+            <span>${FULL_DAYS[e.d.getDay()].slice(0, 3)} ${e.d.getMonth() + 1}/${e.d.getDate()}, ${formatTime12(e.startTime)}${e.rescheduled ? ' (rescheduled)' : ''}</span>
+          </div>`).join('')}
+      </section>`;
   }
 
   function renderStudentRequestsSection() {
@@ -1591,6 +1626,7 @@ function renderTeacherScheduleTab() {
     Object.keys(studentProposalListeners2).forEach((id) => { if (!currentIds.has(id)) unsubscribeStudentProposals(id); });
     Object.keys(studentUnavailableListeners2).forEach((id) => { if (!currentIds.has(id)) unsubscribeStudentUnavailable2(id); });
     renderStudentRequestsSection();
+    renderUpcomingLessonsSection();
   });
 
   const unsubRequests = onSnapshot(collection(db, 'users', state.user.uid, 'rescheduleRequests'), (snap) => {
