@@ -1479,6 +1479,8 @@ function renderTeacherScheduleTab() {
   let studentsForProposals = [];
   let studentProposalsMap2 = {};
   let studentProposalListeners2 = {};
+  let studentUnavailableMap2 = {};
+  let studentUnavailableListeners2 = {};
   let proposalDatePicks = {};
 
   function subscribeStudentProposals(studentId) {
@@ -1497,6 +1499,22 @@ function renderTeacherScheduleTab() {
       delete studentProposalsMap2[studentId];
     }
   }
+  function subscribeStudentUnavailable2(studentId) {
+    if (studentUnavailableListeners2[studentId]) return;
+    const unsub = onSnapshot(collection(db, 'users', teacherId, 'students', studentId, 'unavailableDates'), (snap) => {
+      studentUnavailableMap2[studentId] = snap.docs.map((d) => d.data());
+      renderStudentRequestsSection();
+    });
+    studentUnavailableListeners2[studentId] = unsub;
+    state.unsubs.push(unsub);
+  }
+  function unsubscribeStudentUnavailable2(studentId) {
+    if (studentUnavailableListeners2[studentId]) {
+      studentUnavailableListeners2[studentId]();
+      delete studentUnavailableListeners2[studentId];
+      delete studentUnavailableMap2[studentId];
+    }
+  }
 
   function computeTeacherPickerSlotsHtml(proposalId, studentId, chosenDate) {
     if (!chosenDate) return '';
@@ -1509,7 +1527,9 @@ function renderTeacherScheduleTab() {
         st.recurringSlot.dayOfWeek === s.dayOfWeek && st.recurringSlot.startTime === s.startTime);
       const blocked = teacherUnavailableBlocks.some((b) => b.date === chosenDate &&
         rangesOverlap(timeToMinutes(s.startTime), timeToMinutes(s.startTime) + slotLen, timeToMinutes(b.startTime), timeToMinutes(b.endTime)));
-      return !taken && !blocked;
+      const studentUnavailable = (studentUnavailableMap2[studentId] || []).some((u) => u.date === chosenDate &&
+        rangesOverlap(timeToMinutes(s.startTime), timeToMinutes(s.startTime) + slotLen, timeToMinutes(u.startTime), timeToMinutes(u.endTime)));
+      return !taken && !blocked && !studentUnavailable;
     });
     return openSlots.length === 0
       ? '<p>No open times that day.</p>'
@@ -1567,8 +1587,9 @@ function renderTeacherScheduleTab() {
   const unsubStudentsForProposals = onSnapshot(collection(db, 'users', teacherId, 'students'), (snap) => {
     studentsForProposals = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     const currentIds = new Set(studentsForProposals.map((s) => s.id));
-    studentsForProposals.forEach((s) => subscribeStudentProposals(s.id));
+    studentsForProposals.forEach((s) => { subscribeStudentProposals(s.id); subscribeStudentUnavailable2(s.id); });
     Object.keys(studentProposalListeners2).forEach((id) => { if (!currentIds.has(id)) unsubscribeStudentProposals(id); });
+    Object.keys(studentUnavailableListeners2).forEach((id) => { if (!currentIds.has(id)) unsubscribeStudentUnavailable2(id); });
     renderStudentRequestsSection();
   });
 
@@ -1675,7 +1696,9 @@ function renderStudentScheduleTab() {
     const slotLen = (teacherWeeklySchedule && teacherWeeklySchedule.slotLengthMinutes) || 30;
     const slots = candidateSlots().filter((s) => s.dayOfWeek === dow && !isSlotTaken(s.dayOfWeek, s.startTime) &&
       !teacherUnavailableBlocks.some((b) => b.date === chosenDate &&
-        rangesOverlap(timeToMinutes(s.startTime), timeToMinutes(s.startTime) + slotLen, timeToMinutes(b.startTime), timeToMinutes(b.endTime))));
+        rangesOverlap(timeToMinutes(s.startTime), timeToMinutes(s.startTime) + slotLen, timeToMinutes(b.startTime), timeToMinutes(b.endTime))) &&
+      !myUnavailableDates.some((u) => u.date === chosenDate &&
+        rangesOverlap(timeToMinutes(s.startTime), timeToMinutes(s.startTime) + slotLen, timeToMinutes(u.startTime), timeToMinutes(u.endTime))));
     return slots.length === 0
       ? '<p>No open times that day — try another date.</p>'
       : slots.map((s) => `<button class="slot-chip" onclick="window.studentSubmitProposedTime('${proposalId}', '${chosenDate}', '${s.startTime}')">${formatTime12(s.startTime)}</button>`).join('');
@@ -1747,6 +1770,7 @@ function renderStudentScheduleTab() {
     const activeDays = (teacherWeeklySchedule && teacherWeeklySchedule.activeDays) || [];
     const daySlots = pickerDay === null ? [] : candidateSlots().filter((s) => s.dayOfWeek === pickerDay);
 
+    const openDaySlots = daySlots.filter((s) => !isSlotTaken(s.dayOfWeek, s.startTime));
     box.innerHTML = `
       <section>
         <h2>Choose your lesson time</h2>
@@ -1758,12 +1782,9 @@ function renderStudentScheduleTab() {
         </div>
         ${pickerDay === null
           ? '<p>Select a highlighted day above to see open times.</p>'
-          : daySlots.length === 0
-            ? '<p>No times in that day\'s window — check your teacher\'s weekly hours.</p>'
-            : daySlots.map((s) => isSlotTaken(s.dayOfWeek, s.startTime)
-              ? `<button class="slot-chip" disabled>${formatTime12(s.startTime)} · taken</button>`
-              : `<button class="slot-chip" onclick="window.chooseLessonSlot(${s.dayOfWeek}, '${s.startTime}')">${formatTime12(s.startTime)}</button>`
-            ).join('')}
+          : openDaySlots.length === 0
+            ? '<p>No open times on that day.</p>'
+            : openDaySlots.map((s) => `<button class="slot-chip" onclick="window.chooseLessonSlot(${s.dayOfWeek}, '${s.startTime}')">${formatTime12(s.startTime)}</button>`).join('')}
         ${myStudentDoc.recurringSlot ? `<div style="margin-top:10px;"><button class="ghost" onclick="window.toggleSlotPicker()">Cancel</button></div>` : ''}
       </section>`;
   }
@@ -1797,7 +1818,16 @@ function renderStudentScheduleTab() {
     if (myLesson) {
       line = `${myLesson.date} at ${formatTime12(myLesson.startTime)}${myLesson.status === 'pending_reschedule' ? ' (reschedule pending teacher approval)' : ''}`;
     } else if (myStudentDoc.recurringSlot) {
-      line = formatUpcomingLessonLine(myStudentDoc.recurringSlot.dayOfWeek, myStudentDoc.recurringSlot.startTime);
+      const nextDate = nextOccurrenceDate(myStudentDoc.recurringSlot.dayOfWeek);
+      const nextIso = isoDate(nextDate);
+      const override = myProposals.find((p) => p.status === 'confirmed' && p.originalDate === nextIso);
+      if (override) {
+        const d = new Date(override.proposedDate + 'T00:00:00');
+        const dateStr = `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+        line = `Lesson on ${FULL_DAYS[d.getDay()]}, ${dateStr} at ${formatTime12(override.proposedStartTime)} (rescheduled)`;
+      } else {
+        line = formatUpcomingLessonLine(myStudentDoc.recurringSlot.dayOfWeek, myStudentDoc.recurringSlot.startTime);
+      }
     } else {
       line = null;
     }
@@ -1890,7 +1920,7 @@ function renderStudentScheduleTab() {
     if (!box) return;
     if (!myLesson) { box.innerHTML = ''; return; }
     const activeDays = (teacherWeeklySchedule && teacherWeeklySchedule.activeDays) || [];
-    const daySlots = reschedulePickerDay === null ? [] : candidateSlots().filter((s) => s.dayOfWeek === reschedulePickerDay);
+    const openDaySlots = reschedulePickerDay === null ? [] : candidateSlots().filter((s) => s.dayOfWeek === reschedulePickerDay && !isSlotTaken(s.dayOfWeek, s.startTime));
     box.innerHTML = `
       <section>
         <h2>Reschedule this lesson</h2>
@@ -1902,12 +1932,9 @@ function renderStudentScheduleTab() {
         </div>
         ${reschedulePickerDay === null
           ? ''
-          : daySlots.length === 0
+          : openDaySlots.length === 0
             ? '<p>No open times on that day.</p>'
-            : daySlots.map((s) => isSlotTaken(s.dayOfWeek, s.startTime)
-              ? `<button class="slot-chip" disabled>${formatTime12(s.startTime)} · taken</button>`
-              : `<button class="slot-chip" onclick="window.handleReschedule('${s.startTime}')">${formatTime12(s.startTime)}</button>`
-            ).join('')}
+            : openDaySlots.map((s) => `<button class="slot-chip" onclick="window.handleReschedule('${s.startTime}')">${formatTime12(s.startTime)}</button>`).join('')}
       </section>`;
   }
 
@@ -1948,6 +1975,7 @@ function renderStudentScheduleTab() {
   const unsubProposals = onSnapshot(collection(db, 'users', teacherId, 'students', uid, 'rescheduleProposals'), (snap) => {
     myProposals = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     renderProposalsSection();
+    renderMyLessonSection();
   });
 
   state.unsubs.push(unsubMyDoc, unsubMyUnavailable, unsubTeacherDoc, unsubAllStudents, unsubLesson, unsubUnavailableBlocks, unsubProposals);
