@@ -149,8 +149,9 @@ function minutesToTime(mins) {
 }
 
 /** Turns the teacher's weekly teaching window into individual bookable
- *  slots, minus anything covered by an unavailable block. */
-function generateCandidateSlots(weeklySchedule, unavailableBlocks) {
+ *  recurring slots (unavailable dates are one-off exceptions, shown
+ *  separately, and don't remove a slot from the permanent weekly pool). */
+function generateCandidateSlots(weeklySchedule) {
   if (!weeklySchedule || !weeklySchedule.activeDays || !weeklySchedule.activeDays.length) return [];
   const slotLen = weeklySchedule.slotLengthMinutes || 30;
   const startMin = timeToMinutes(weeklySchedule.startTime || '15:00');
@@ -158,11 +159,7 @@ function generateCandidateSlots(weeklySchedule, unavailableBlocks) {
   const slots = [];
   for (const day of weeklySchedule.activeDays) {
     for (let cursor = startMin; cursor + slotLen <= endMin; cursor += slotLen) {
-      const cursorEnd = cursor + slotLen;
-      const blocked = (unavailableBlocks || []).some((b) =>
-        b.dayOfWeek === day && cursor < timeToMinutes(b.endTime) && cursorEnd > timeToMinutes(b.startTime)
-      );
-      if (!blocked) slots.push({ dayOfWeek: day, startTime: minutesToTime(cursor) });
+      slots.push({ dayOfWeek: day, startTime: minutesToTime(cursor) });
     }
   }
   return slots;
@@ -596,13 +593,12 @@ function renderTeacherDashboard() {
   });
 
   let teacherUnavailableBlocks = [];
-  let pickerBlockDay = null;
 
   function renderTeacherScheduleSection() {
     const box = document.getElementById('teacher-availability-section');
     if (!box) return;
     const ws = state.profile.weeklySchedule || { activeDays: [], startTime: '15:00', endTime: '18:00', slotLengthMinutes: 30 };
-    const sortedBlocks = teacherUnavailableBlocks.slice().sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.startTime.localeCompare(b.startTime));
+    const sortedBlocks = teacherUnavailableBlocks.slice().sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
 
     box.innerHTML = `
       <section>
@@ -626,19 +622,16 @@ function renderTeacherDashboard() {
 
       <section>
         <h2>Mark times you're unavailable</h2>
-        <p>Pick a day, then a time range within your teaching hours to block off.</p>
-        <div class="day-pills">
-          ${DAY_LETTERS.map((letter, i) => `
-            <button type="button" class="day-pill ${pickerBlockDay === i ? 'selected' : ''}" onclick="window.pickBlockDay(${i})">${letter}</button>`).join('')}
-        </div>
+        <p>Pick a specific date, then a time range to block off (e.g. a recital, a day off).</p>
         <form class="inline" onsubmit="window.addUnavailableBlock(event)">
+          <input id="block-date" type="date" required />
           <input id="block-start" type="time" required />
           <input id="block-end" type="time" required />
           <button class="ghost" type="submit">Add</button>
         </form>
         ${sortedBlocks.length === 0 ? '' : sortedBlocks.map((b) => `
           <div class="student-row">
-            <span>${DAYS[b.dayOfWeek]} ${b.startTime}–${b.endTime}</span>
+            <span>${b.date} ${b.startTime}–${b.endTime}</span>
             <button class="danger-link" onclick="window.deleteUnavailableBlock('${b.id}')">Remove</button>
           </div>`).join('')}
       </section>`;
@@ -649,18 +642,13 @@ function renderTeacherDashboard() {
     renderTeacherScheduleSection();
   });
 
-  window.pickBlockDay = function (dayIndex) {
-    pickerBlockDay = dayIndex;
-    renderTeacherScheduleSection();
-  };
-
   window.addUnavailableBlock = async function (e) {
     e.preventDefault();
-    if (pickerBlockDay === null) { alert('Pick a day first.'); return; }
+    const date = document.getElementById('block-date').value;
     const startTime = document.getElementById('block-start').value;
     const endTime = document.getElementById('block-end').value;
-    if (!startTime || !endTime) return;
-    await addDoc(collection(db, 'users', state.user.uid, 'unavailableBlocks'), { dayOfWeek: pickerBlockDay, startTime, endTime });
+    if (!date || !startTime || !endTime) return;
+    await addDoc(collection(db, 'users', state.user.uid, 'unavailableBlocks'), { date, startTime, endTime });
   };
 
   window.deleteUnavailableBlock = async function (blockId) {
@@ -746,6 +734,7 @@ function renderStudentView() {
         <button class="ghost" onclick="window.logout()">Sign out</button>
       </header>
       <div id="my-lesson-section"><section><h2>Upcoming lesson</h2><p>Loading…</p></section></div>
+      <div id="teacher-unavailable-section"></div>
       <div id="lesson-time-section"></div>
       <div id="unavailable-section"></div>
       <div id="reschedule-picker-section"></div>
@@ -779,7 +768,7 @@ function renderStudentView() {
   }
 
   function candidateSlots() {
-    return generateCandidateSlots(teacherWeeklySchedule, teacherUnavailableBlocks);
+    return generateCandidateSlots(teacherWeeklySchedule);
   }
 
   function renderLessonTimeSection() {
@@ -954,6 +943,19 @@ function renderStudentView() {
     teacherUnavailableBlocks = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     renderLessonTimeSection();
     renderReschedulePicker();
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const upcoming = teacherUnavailableBlocks
+      .filter((b) => b.date >= todayStr)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+    const box = document.getElementById('teacher-unavailable-section');
+    if (box) {
+      box.innerHTML = upcoming.length === 0 ? '' : `
+        <section>
+          <h2>Your teacher is unavailable</h2>
+          ${upcoming.map((b) => `<p style="margin:0 0 4px;">${b.date}, ${b.startTime}–${b.endTime}</p>`).join('')}
+        </section>`;
+    }
   });
 
   state.unsubs.push(unsubMyDoc, unsubTeacherDoc, unsubAllStudents, unsubLesson, unsubUnavailableBlocks);
