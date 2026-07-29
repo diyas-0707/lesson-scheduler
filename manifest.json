@@ -1,6 +1,6 @@
 {
-  "name": "Flute Lesson Scheduler",
-  "short_name": "Flute Sched",
+  "name": "Lesson Scheduler",
+  "short_name": "Lesson Sched",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
