@@ -13,7 +13,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="apple-mobile-web-app-title" content="Lesson Sched" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Display&family=Karla:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root, html[data-theme="manuscript"] {
     --paper: #F5F1E8; --paper-raised: #FBF9F4; --ink: #22252B; --ink-soft: #5A5E67;
@@ -33,11 +33,23 @@
     --rule: rgba(36, 42, 30, 0.14); --rule-light: rgba(36, 42, 30, 0.08);
     --shadow: 0 1px 2px rgba(36,42,30,0.06), 0 8px 24px rgba(36,42,30,0.05);
   }
+  html[data-theme="rosewood"] {
+    --paper: #F5EAE6; --paper-raised: #FCF5F3; --ink: #2E2124; --ink-soft: #6B5458;
+    --brass: #A65A5F; --brass-deep: #7D3F44; --slate: #6B5A7D; --sage: #7D8F6B;
+    --rule: rgba(46, 33, 36, 0.14); --rule-light: rgba(46, 33, 36, 0.08);
+    --shadow: 0 1px 2px rgba(46,33,36,0.06), 0 8px 24px rgba(46,33,36,0.05);
+  }
+  html[data-theme="sunset"] {
+    --paper: #FBEEE0; --paper-raised: #FFF8EF; --ink: #33241A; --ink-soft: #7A5D4A;
+    --brass: #D97B3F; --brass-deep: #B25A24; --slate: #5C6B8C; --sage: #6E8F5F;
+    --rule: rgba(51, 36, 26, 0.14); --rule-light: rgba(51, 36, 26, 0.08);
+    --shadow: 0 1px 2px rgba(51,36,26,0.06), 0 8px 24px rgba(51,36,26,0.05);
+  }
 
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--paper); color: var(--ink); font-family: 'Public Sans', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
-  h1, h2, .display { font-family: 'Fraunces', Georgia, serif; font-weight: 500; letter-spacing: -0.01em; margin: 0; }
-  .mono { font-family: 'IBM Plex Mono', monospace; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font-family: 'Karla', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  h1, h2, .display { font-family: 'Libre Caslon Display', Georgia, serif; font-weight: 500; letter-spacing: -0.01em; margin: 0; }
+  .mono { font-family: 'Space Mono', monospace; }
   .staff { width: 56px; height: 18px; margin: 10px auto 0; }
   .staff line { stroke: var(--brass); stroke-width: 1; }
   .app-logo { width: 128px; height: 128px; object-fit: cover; border-radius: 20px; box-shadow: var(--shadow); border: 1px solid var(--rule-light); margin-bottom: 4px; }
@@ -62,12 +74,12 @@
   .drawer-close { align-self: flex-end; background: transparent; border: none; color: var(--ink-soft); font-size: 18px; padding: 4px 8px; margin-bottom: 4px; }
   .drawer-tab {
     text-align: left; background: transparent; border: none; padding: 11px 12px; border-radius: 8px;
-    color: var(--ink); font-family: 'Public Sans', sans-serif; font-weight: 600; font-size: 14px;
+    color: var(--ink); font-family: 'Karla', sans-serif; font-weight: 600; font-size: 14px;
   }
   .drawer-tab:hover { background: var(--rule-light); }
   .drawer-tab.active { background: var(--brass-deep); color: #FFF9EF; }
 
-  button { cursor: pointer; border: none; border-radius: 8px; padding: 11px 18px; background: var(--ink); color: var(--paper-raised); font-family: 'Public Sans', sans-serif; font-weight: 600; font-size: 14px; letter-spacing: 0.01em; transition: transform 0.12s ease, background 0.12s ease; }
+  button { cursor: pointer; border: none; border-radius: 8px; padding: 11px 18px; background: var(--ink); color: var(--paper-raised); font-family: 'Karla', sans-serif; font-weight: 600; font-size: 14px; letter-spacing: 0.01em; transition: transform 0.12s ease, background 0.12s ease; }
   button:hover { background: var(--slate); }
   button:active { transform: scale(0.98); }
   button.primary { background: var(--brass-deep); color: #FFF9EF; }
@@ -82,31 +94,31 @@
   .danger-link:hover { background: transparent; color: #8C372D; }
   .danger-confirm { border: 1px solid rgba(169, 68, 56, 0.35); background: rgba(169, 68, 56, 0.06); border-radius: 10px; padding: 14px; margin-top: 8px; }
   .danger-confirm p { color: var(--ink); font-size: 13px; margin: 0 0 10px; }
-  input, select { font-family: 'Public Sans', sans-serif; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--rule); background: var(--paper-raised); color: var(--ink); font-size: 14px; }
+  input, select { font-family: 'Karla', sans-serif; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--rule); background: var(--paper-raised); color: var(--ink); font-size: 14px; }
   input::placeholder { color: var(--ink-soft); }
   input:focus-visible, select:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
   section, .card { background: var(--paper-raised); border: 1px solid var(--rule-light); border-radius: 14px; padding: 18px 18px 20px; margin-bottom: 16px; box-shadow: var(--shadow); }
-  section h2, .card h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--brass-deep); font-family: 'Public Sans', sans-serif; font-weight: 700; margin: 0 0 12px; }
+  section h2, .card h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--brass-deep); font-family: 'Karla', sans-serif; font-weight: 700; margin: 0 0 12px; }
   section p { color: var(--ink-soft); font-size: 14px; line-height: 1.5; margin: 0 0 10px; }
-  .invite-code { display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; letter-spacing: 0.12em; background: var(--paper); border: 1px dashed var(--brass); border-radius: 8px; padding: 8px 16px; color: var(--brass-deep); }
+  .invite-code { display: inline-block; font-family: 'Space Mono', monospace; font-size: 22px; font-weight: 500; letter-spacing: 0.12em; background: var(--paper); border: 1px dashed var(--brass); border-radius: 8px; padding: 8px 16px; color: var(--brass-deep); }
   .student-row, .request-card { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--rule-light); font-size: 14px; }
   .student-row:last-child, .request-card:last-child { border-bottom: none; }
   .request-card { flex-direction: column; align-items: flex-start; gap: 8px; }
   .request-card > div { display: flex; gap: 8px; }
   .error { color: #A94438; font-size: 13px; margin-top: 8px; }
   .ok { color: var(--sage); font-size: 13px; margin-top: 8px; }
-  .slot-chip { display: inline-flex; margin: 4px 6px 0 0; background: var(--paper); border: 1px solid var(--sage); color: var(--sage); font-family: 'IBM Plex Mono', monospace; font-size: 13px; padding: 7px 12px; white-space: nowrap; }
+  .slot-chip { display: inline-flex; margin: 4px 6px 0 0; background: var(--paper); border: 1px solid var(--sage); color: var(--sage); font-family: 'Space Mono', monospace; font-size: 13px; padding: 7px 12px; white-space: nowrap; }
   .slot-chip:hover { background: var(--sage); color: #fff; }
   .slot-chip:disabled { border-color: var(--rule); color: var(--ink-soft); background: transparent; }
   form.inline { display: flex; gap: 8px; flex-wrap: wrap; }
   .divider-text { margin: 14px 0 6px; font-size: 13px; color: var(--ink-soft); }
-  .current-slot { font-family: 'IBM Plex Mono', monospace; color: var(--slate); font-size: 15px; margin: 0 0 6px; }
+  .current-slot { font-family: 'Space Mono', monospace; color: var(--slate); font-size: 15px; margin: 0 0 6px; }
 
   .day-pills { display: flex; gap: 8px; margin: 4px 0 14px; }
   .day-pill {
     width: 34px; height: 34px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
-    font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 500;
+    font-family: 'Space Mono', monospace; font-size: 12px; font-weight: 500;
     background: var(--paper); color: var(--ink-soft);
     border: 1px solid var(--rule); padding: 0; cursor: pointer;
   }
@@ -133,7 +145,7 @@
   .calendar-nav { display: flex; align-items: center; gap: 6px; }
   .calendar-nav-btn { width: 32px; height: 32px; padding: 0; border-radius: 8px; background: var(--paper-raised); color: var(--ink); border: 1px solid var(--rule); font-size: 14px; }
   .calendar-nav-btn:hover { background: var(--rule-light); }
-  .calendar-range-label { font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 500; color: var(--ink); min-width: 130px; text-align: center; }
+  .calendar-range-label { font-family: 'Space Mono', monospace; font-size: 14px; font-weight: 500; color: var(--ink); min-width: 130px; text-align: center; }
   .calendar-view-toggle { display: flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
   .calendar-view-toggle button { border-radius: 0; padding: 7px 12px; font-size: 12px; background: var(--paper-raised); color: var(--ink-soft); }
   .calendar-view-toggle button.active { background: var(--brass-deep); color: #FFF9EF; }
@@ -144,7 +156,7 @@
   .calendar-week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
   .calendar-day-col { background: var(--paper-raised); border: 1px solid var(--rule-light); border-radius: 10px; padding: 8px 6px; min-height: 90px; }
   .calendar-day-col.today { border-color: var(--brass-deep); }
-  .calendar-day-header { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--ink-soft); text-align: center; margin-bottom: 6px; }
+  .calendar-day-header { font-family: 'Space Mono', monospace; font-size: 11px; color: var(--ink-soft); text-align: center; margin-bottom: 6px; }
   .calendar-day-header b { display: block; color: var(--ink); font-size: 13px; }
   .calendar-block { border-radius: 6px; padding: 3px 6px; font-size: 10.5px; line-height: 1.4; margin-bottom: 4px; color: #fff; white-space: normal; overflow-wrap: break-word; word-break: break-word; }
   .calendar-block.unavailable { background: #9aa0a8; color: #fff; }
@@ -156,7 +168,7 @@
   .calendar-month-cell { background: var(--paper-raised); border: 1px solid var(--rule-light); border-radius: 8px; padding: 5px; min-height: 62px; font-size: 10px; }
   .calendar-month-cell.other-month { opacity: 0.35; }
   .calendar-month-cell.today { border-color: var(--brass-deep); }
-  .calendar-month-daynum { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--ink-soft); margin-bottom: 3px; }
+  .calendar-month-daynum { font-family: 'Space Mono', monospace; font-size: 11px; color: var(--ink-soft); margin-bottom: 3px; }
   .calendar-month-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin: 1px; }
 
   .day-detail-overlay { position: fixed; inset: 0; background: rgba(20, 22, 26, 0.4); z-index: 42; }
@@ -218,7 +230,9 @@ const STUDENT_TABS = [
 const THEMES = [
   { id: 'manuscript', label: 'Manuscript', dot: '#B8935A' },
   { id: 'slate', label: 'Slate', dot: '#3D6E91' },
-  { id: 'forest', label: 'Forest', dot: '#6E8C3F' }
+  { id: 'forest', label: 'Forest', dot: '#6E8C3F' },
+  { id: 'rosewood', label: 'Rosewood', dot: '#A65A5F' },
+  { id: 'sunset', label: 'Sunset', dot: '#D97B3F' }
 ];
 const STUDENT_COLORS = ['#8C6D3F', '#3D6E91', '#6E8C3F', '#8B5FA0', '#B0555A', '#4E8C7A', '#A0763F'];
 
