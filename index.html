@@ -45,6 +45,24 @@
     --rule: rgba(51, 36, 26, 0.14); --rule-light: rgba(51, 36, 26, 0.08);
     --shadow: 0 1px 2px rgba(51,36,26,0.06), 0 8px 24px rgba(51,36,26,0.05);
   }
+  html[data-theme="lavender"] {
+    --paper: #EFEBF5; --paper-raised: #F8F6FB; --ink: #2C2438; --ink-soft: #6B5F7A;
+    --brass: #8B6FA8; --brass-deep: #6B4F87; --slate: #5C6B8C; --sage: #6E8F7D;
+    --rule: rgba(44, 36, 56, 0.14); --rule-light: rgba(44, 36, 56, 0.08);
+    --shadow: 0 1px 2px rgba(44,36,56,0.06), 0 8px 24px rgba(44,36,56,0.05);
+  }
+  html[data-theme="grey"] {
+    --paper: #EBEBED; --paper-raised: #F7F7F8; --ink: #202024; --ink-soft: #5C5C63;
+    --brass: #57565F; --brass-deep: #3F3E46; --slate: #71717A; --sage: #6E8F6B;
+    --rule: rgba(32, 32, 36, 0.14); --rule-light: rgba(32, 32, 36, 0.08);
+    --shadow: 0 1px 2px rgba(32,32,36,0.06), 0 8px 24px rgba(32,32,36,0.05);
+  }
+  html[data-theme="white"] {
+    --paper: #FAFAFA; --paper-raised: #FFFFFF; --ink: #1A1A1A; --ink-soft: #6B6B6B;
+    --brass: #4A5568; --brass-deep: #2D3748; --slate: #718096; --sage: #5F8F6B;
+    --rule: rgba(0, 0, 0, 0.10); --rule-light: rgba(0, 0, 0, 0.06);
+    --shadow: 0 1px 2px rgba(0,0,0,0.05), 0 8px 24px rgba(0,0,0,0.04);
+  }
 
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--paper); color: var(--ink); font-family: 'Manrope', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
@@ -232,7 +250,10 @@ const THEMES = [
   { id: 'slate', label: 'Slate', dot: '#3D6E91' },
   { id: 'forest', label: 'Forest', dot: '#6E8C3F' },
   { id: 'rosewood', label: 'Rosewood', dot: '#A65A5F' },
-  { id: 'sunset', label: 'Sunset', dot: '#D97B3F' }
+  { id: 'sunset', label: 'Sunset', dot: '#D97B3F' },
+  { id: 'lavender', label: 'Lavender', dot: '#8B6FA8' },
+  { id: 'grey', label: 'Grey', dot: '#57565F' },
+  { id: 'white', label: 'White', dot: '#4A5568' }
 ];
 const STUDENT_COLORS = ['#8C6D3F', '#3D6E91', '#6E8C3F', '#8B5FA0', '#B0555A', '#4E8C7A', '#A0763F'];
 
@@ -685,11 +706,11 @@ function renderSettingsTab() {
 
       <section>
         <h2>Theme</h2>
-        <div class="theme-options">
-          ${THEMES.map((t) => `
-            <button type="button" class="theme-swatch ${(state.profile.theme || 'manuscript') === t.id ? 'active' : ''}" onclick="window.setTheme('${t.id}')">
-              <span class="theme-dot" style="background:${t.dot};"></span>${t.label}
-            </button>`).join('')}
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span class="theme-dot" style="background:${(THEMES.find((t) => t.id === (state.profile.theme || 'manuscript')) || THEMES[0]).dot};"></span>
+          <select onchange="window.setTheme(this.value)">
+            ${THEMES.map((t) => `<option value="${t.id}" ${(state.profile.theme || 'manuscript') === t.id ? 'selected' : ''}>${t.label}</option>`).join('')}
+          </select>
         </div>
       </section>
 
