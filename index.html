@@ -185,12 +185,17 @@
   .calendar-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .legend-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 
-  .calendar-week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
-  .calendar-day-col { background: var(--paper-raised); border: 1px solid var(--rule-light); border-radius: 10px; padding: 8px 6px; min-height: 90px; }
-  .calendar-day-col.today { border-color: var(--brass-deep); }
-  .calendar-day-header { font-family: 'Manrope', sans-serif; font-weight: 600; font-size: 11px; color: var(--ink-soft); text-align: center; margin-bottom: 6px; }
-  .calendar-day-header b { display: block; color: var(--ink); font-size: 13px; }
-  .calendar-block { border-radius: 6px; padding: 3px 6px; font-size: 10.5px; line-height: 1.4; margin-bottom: 4px; color: #fff; white-space: normal; overflow-wrap: break-word; word-break: break-word; }
+  .calendar-week-list { display: flex; flex-direction: column; gap: 8px; }
+  .calendar-day-row {
+    display: flex; align-items: flex-start; gap: 10px;
+    background: var(--paper-raised); border: 1px solid var(--rule-light); border-radius: 10px; padding: 10px;
+  }
+  .calendar-day-row.today { border-color: var(--brass-deep); }
+  .calendar-day-label { flex-shrink: 0; width: 46px; font-family: 'Manrope', sans-serif; font-weight: 600; font-size: 11px; color: var(--ink-soft); text-align: center; padding-top: 2px; }
+  .calendar-day-label b { display: block; color: var(--ink); font-size: 13px; margin-top: 2px; }
+  .calendar-day-blocks { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-height: 22px; }
+  .calendar-day-blocks:empty::after { content: '—'; color: var(--ink-soft); font-size: 12px; padding-top: 2px; }
+  .calendar-block { border-radius: 6px; padding: 4px 8px; font-size: 11px; line-height: 1.4; color: #fff; white-space: normal; overflow-wrap: break-word; word-break: break-word; max-width: 160px; }
   .calendar-block.unavailable { background: #9aa0a8; color: #fff; }
   .calendar-block.student-unavailable { background: #C48E93; color: #fff; }
   .calendar-block.free { background: transparent; border: 1px dashed var(--sage); color: var(--sage); }
@@ -944,18 +949,20 @@ function calendarToolbarHtml() {
 
 function weekGridHtml(getBlocksForDate, onDayClick) {
   const today = new Date();
-  let html = '<div class="calendar-week-grid">';
+  let html = '<div class="calendar-week-list">';
   for (let i = 0; i < 7; i++) {
     const d = addDays(state.calendarWeekStart, i);
     const blocks = getBlocksForDate(d);
     const clickAttr = onDayClick ? ` onclick="${onDayClick(d)}" style="cursor:pointer;"` : '';
     html += `
-      <div class="calendar-day-col ${isSameDate(d, today) ? 'today' : ''}"${clickAttr}>
-        <div class="calendar-day-header">${DAY_LETTERS[d.getDay()]}<b>${d.getMonth() + 1}/${d.getDate()}</b></div>
-        ${blocks.map((b) => {
-          const typeClass = b.type === 'unavailable' ? 'unavailable' : (b.type === 'free' ? 'free' : (b.type === 'student-unavailable' ? 'student-unavailable' : ''));
-          return `<div class="calendar-block ${typeClass} ${b.conflict ? 'conflict' : ''}" style="${b.type === 'lesson' ? `background:${b.color};` : ''}">${b.label}</div>`;
-        }).join('')}
+      <div class="calendar-day-row ${isSameDate(d, today) ? 'today' : ''}"${clickAttr}>
+        <div class="calendar-day-label">${DAY_LETTERS[d.getDay()]}<b>${d.getMonth() + 1}/${d.getDate()}</b></div>
+        <div class="calendar-day-blocks">
+          ${blocks.map((b) => {
+            const typeClass = b.type === 'unavailable' ? 'unavailable' : (b.type === 'free' ? 'free' : (b.type === 'student-unavailable' ? 'student-unavailable' : ''));
+            return `<div class="calendar-block ${typeClass} ${b.conflict ? 'conflict' : ''}" style="${b.type === 'lesson' ? `background:${b.color};` : ''}">${b.label}</div>`;
+          }).join('')}
+        </div>
       </div>`;
   }
   html += '</div>';
