@@ -1,6 +1,6 @@
 {
   "name": "Lesson Scheduler",
-  "short_name": "Lesson Sched",
+  "short_name": "Lesson Scheduler",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
