@@ -257,6 +257,10 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const googleProvider = new GoogleAuthProvider();
 
+// Public key only — safe to embed client-side. The matching private key
+// lives only in the Vercel serverless function's environment variables.
+const VAPID_PUBLIC_KEY = 'BC2xgndjwPP0geYOmXHSI53Hs5gfvdVtvGsd4MqH5p5sIC3IPlu7HzeYbxwKDuKCNdalCuYNQ-wsFurBmypJ7KU';
+
 const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const DAY_LETTERS = ['S','M','T','W','T','F','S'];
 const FULL_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -511,6 +515,11 @@ async function requestConnectionByEmail(fromRole, toEmail) {
       studentId: null, studentName: null, studentEmail: email,
       initiatedBy: 'teacher', status: 'pending', createdAt: serverTimestamp()
     });
+    // Best-effort: if this email already has an account, try to notify them.
+    const existing = await getDocs(query(collection(db, 'users'), where('email', '==', email)));
+    if (!existing.empty) {
+      sendPushNotification(existing.docs[0].id, 'New connection request', `${state.profile.name} wants to add you as a student.`);
+    }
     return;
   }
 
@@ -527,6 +536,7 @@ async function requestConnectionByEmail(fromRole, toEmail) {
     teacherId: toUid, teacherName: toData.name, teacherEmail: toData.email,
     initiatedBy: 'student', status: 'pending', createdAt: serverTimestamp()
   });
+  sendPushNotification(toUid, 'New connection request', `${state.profile.name} wants to connect as a student.`);
 }
 
 async function acceptConnectionRequest(requestId, request) {
@@ -603,6 +613,8 @@ async function createRescheduleProposal(teacherId, studentId, originalDate, orig
     proposedDate, proposedStartTime, proposedBy: requestedBy,
     createdAt: serverTimestamp()
   });
+  const targetUserId = requestedBy === 'teacher' ? studentId : teacherId;
+  sendPushNotification(targetUserId, 'Reschedule requested', `A new time was proposed: ${proposedDate} at ${formatTime12(proposedStartTime)}. Tap to respond.`);
 }
 
 async function submitProposedTime(teacherId, studentId, proposalId, actingParty, date, time) {
@@ -610,13 +622,17 @@ async function submitProposedTime(teacherId, studentId, proposalId, actingParty,
     proposedDate: date, proposedStartTime: time, proposedBy: actingParty,
     mode: 'confirm', turnOwner: otherParty(actingParty)
   });
+  const targetUserId = actingParty === 'teacher' ? studentId : teacherId;
+  sendPushNotification(targetUserId, 'Reschedule requested', `A new time was proposed: ${date} at ${formatTime12(time)}. Tap to respond.`);
 }
 
-async function confirmProposedTime(teacherId, studentId, proposalId, accept) {
+async function confirmProposedTime(teacherId, studentId, proposalId, accept, confirmingParty) {
   if (accept) {
     await updateDoc(doc(db, 'users', teacherId, 'students', studentId, 'rescheduleProposals', proposalId), {
       status: 'confirmed', mode: null
     });
+    const targetUserId = confirmingParty === 'teacher' ? studentId : teacherId;
+    sendPushNotification(targetUserId, 'Reschedule confirmed', 'Your reschedule request was confirmed.');
   } else {
     // Declining party now picks their own alternative — turnOwner stays on
     // them, just switches from confirming to picking.
@@ -694,6 +710,60 @@ window.confirmDeleteAccount = async function (btn) {
   }
 };
 
+// ---------- Push notifications ----------
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+async function subscribeToPush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    throw new Error("This browser doesn't support push notifications.");
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    throw new Error('Notification permission was not granted.');
+  }
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+  });
+  await updateDoc(doc(db, 'users', state.user.uid), { pushSubscription: subscription.toJSON() });
+  state.profile = { ...state.profile, pushSubscription: subscription.toJSON() };
+}
+
+async function unsubscribeFromPush() {
+  if ('serviceWorker' in navigator) {
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (subscription) await subscription.unsubscribe();
+  }
+  await updateDoc(doc(db, 'users', state.user.uid), { pushSubscription: null });
+  state.profile = { ...state.profile, pushSubscription: null };
+}
+
+/** Best-effort: looks up the target user's saved push subscription and
+ *  asks the serverless function to send them a notification. Never blocks
+ *  or throws into the caller's main action if it fails. */
+async function sendPushNotification(targetUserId, title, body) {
+  try {
+    if (!targetUserId) return;
+    const snap = await getDoc(doc(db, 'users', targetUserId));
+    const sub = snap.exists() ? snap.data().pushSubscription : null;
+    if (!sub) return;
+    await fetch('/api/send-notification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscription: sub, title, body })
+    });
+  } catch (err) { /* notifications are a nice-to-have, never block the real action */ }
+}
+
 // ---------- Settings (shared by teacher and student) ----------
 window.saveDisplayName = async function (e) {
   e.preventDefault();
@@ -738,6 +808,12 @@ function renderSettingsTab() {
       </section>
 
       <section>
+        <h2>Notifications</h2>
+        <p>Get notified about new connection requests and reschedule updates.</p>
+        <div id="notifications-status"></div>
+      </section>
+
+      <section>
         <h2>Account</h2>
         <button class="ghost" onclick="window.logout()">Sign out</button>
       </section>
@@ -745,6 +821,34 @@ function renderSettingsTab() {
       <div id="delete-account-mount"></div>
     </div>`;
   document.getElementById('delete-account-mount').innerHTML = deleteAccountBlock();
+
+  function renderNotificationsStatus() {
+    const box = document.getElementById('notifications-status');
+    if (!box) return;
+    const enabled = !!state.profile.pushSubscription;
+    box.innerHTML = enabled
+      ? `<p class="ok" style="margin-bottom:8px;">Notifications are on.</p><button class="ghost" onclick="window.disableNotifications(this)">Turn off</button>`
+      : `<button class="primary" onclick="window.enableNotifications(this)">Enable notifications</button><div id="notifications-error"></div>`;
+  }
+
+  window.enableNotifications = async function (btn) {
+    btn.disabled = true; btn.textContent = 'Enabling…';
+    try {
+      await subscribeToPush();
+      renderNotificationsStatus();
+    } catch (err) {
+      document.getElementById('notifications-error').innerHTML = `<p class="error">${err.message}</p>`;
+      btn.disabled = false; btn.textContent = 'Enable notifications';
+    }
+  };
+
+  window.disableNotifications = async function (btn) {
+    btn.disabled = true; btn.textContent = 'Turning off…';
+    await unsubscribeFromPush();
+    renderNotificationsStatus();
+  };
+
+  renderNotificationsStatus();
 
   let themeDropdownOpen = false;
 
@@ -1751,7 +1855,7 @@ function renderTeacherHomeTab() {
   };
 
   window.teacherConfirmProposedTime = async function (studentId, proposalId, accept) {
-    await confirmProposedTime(teacherId, studentId, proposalId, accept);
+    await confirmProposedTime(teacherId, studentId, proposalId, accept, 'teacher');
   };
 
   const unsubTeacherUnavailForHome = onSnapshot(collection(db, 'users', teacherId, 'unavailableBlocks'), (snap) => {
@@ -2006,7 +2110,7 @@ function renderStudentHomeTab() {
   };
 
   window.studentConfirmProposedTime = async function (proposalId, accept) {
-    await confirmProposedTime(teacherId, uid, proposalId, accept);
+    await confirmProposedTime(teacherId, uid, proposalId, accept, 'student');
   };
 
   function renderMyLessonSection() {
