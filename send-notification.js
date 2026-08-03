@@ -23,9 +23,10 @@ module.exports = async function handler(req, res) {
     );
     res.status(200).json({ ok: true });
   } catch (err) {
-    // A 410/404 here usually just means that subscription is stale
-    // (user revoked permission, cleared data, etc.) — not worth surfacing
-    // as a hard failure to the person who triggered the action.
-    res.status(200).json({ ok: false, error: err.message });
+    // A 410/404 here means that subscription is stale (user revoked
+    // permission, cleared data, uninstalled, etc.) — flag it so the client
+    // can remove that device's record instead of retrying it forever.
+    const gone = err.statusCode === 404 || err.statusCode === 410;
+    res.status(200).json({ ok: false, gone, error: err.message });
   }
 };

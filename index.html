@@ -666,6 +666,8 @@ async function deleteAccount() {
   asStudent.forEach((d) => batch.delete(d.ref));
   const asTeacher = await getDocs(query(collection(db, 'connectionRequests'), where('teacherId', '==', uid)));
   asTeacher.forEach((d) => batch.delete(d.ref));
+  const pushSubsSnap = await getDocs(collection(db, 'users', uid, 'pushSubscriptions'));
+  pushSubsSnap.forEach((d) => batch.delete(d.ref));
   batch.delete(doc(db, 'users', uid));
   await batch.commit();
   try {
@@ -720,6 +722,15 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray;
 }
 
+/** Short, stable, Firestore-doc-id-safe fingerprint for a push endpoint,
+ *  so the same device always maps to the same subcollection doc instead
+ *  of creating a duplicate every time it re-subscribes. */
+function hashEndpoint(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) | 0;
+  return Math.abs(hash).toString(36);
+}
+
 async function subscribeToPush() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     throw new Error("This browser doesn't support push notifications.");
@@ -733,34 +744,47 @@ async function subscribeToPush() {
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
   });
-  await updateDoc(doc(db, 'users', state.user.uid), { pushSubscription: subscription.toJSON() });
-  state.profile = { ...state.profile, pushSubscription: subscription.toJSON() };
+  const subJson = subscription.toJSON();
+  const subId = hashEndpoint(subJson.endpoint);
+  await setDoc(doc(db, 'users', state.user.uid, 'pushSubscriptions', subId), {
+    ...subJson, updatedAt: serverTimestamp()
+  });
 }
 
+/** Removes only THIS device's subscription — other devices the same
+ *  person has enabled notifications on are untouched. */
 async function unsubscribeFromPush() {
   if ('serviceWorker' in navigator) {
     const registration = await navigator.serviceWorker.ready;
     const subscription = await registration.pushManager.getSubscription();
-    if (subscription) await subscription.unsubscribe();
+    if (subscription) {
+      const subId = hashEndpoint(subscription.toJSON().endpoint);
+      await deleteDoc(doc(db, 'users', state.user.uid, 'pushSubscriptions', subId));
+      await subscription.unsubscribe();
+    }
   }
-  await updateDoc(doc(db, 'users', state.user.uid), { pushSubscription: null });
-  state.profile = { ...state.profile, pushSubscription: null };
 }
 
-/** Best-effort: looks up the target user's saved push subscription and
- *  asks the serverless function to send them a notification. Never blocks
- *  or throws into the caller's main action if it fails. */
+/** Best-effort: sends to every device the target user has enabled
+ *  notifications on, and quietly cleans up any subscription the browser
+ *  reports as expired/revoked. Never blocks or throws into the caller's
+ *  main action if any of this fails. */
 async function sendPushNotification(targetUserId, title, body) {
   try {
     if (!targetUserId) return;
-    const snap = await getDoc(doc(db, 'users', targetUserId));
-    const sub = snap.exists() ? snap.data().pushSubscription : null;
-    if (!sub) return;
-    await fetch('/api/send-notification', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subscription: sub, title, body })
-    });
+    const subsSnap = await getDocs(collection(db, 'users', targetUserId, 'pushSubscriptions'));
+    if (subsSnap.empty) return;
+    await Promise.all(subsSnap.docs.map(async (d) => {
+      try {
+        const res = await fetch('/api/send-notification', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subscription: d.data(), title, body })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data.gone) await deleteDoc(d.ref); // stale subscription — device unsubscribed elsewhere
+      } catch (err) { /* one device failing shouldn't stop the others */ }
+    }));
   } catch (err) { /* notifications are a nice-to-have, never block the real action */ }
 }
 
@@ -822,13 +846,30 @@ function renderSettingsTab() {
     </div>`;
   document.getElementById('delete-account-mount').innerHTML = deleteAccountBlock();
 
-  function renderNotificationsStatus() {
+  async function renderNotificationsStatus() {
     const box = document.getElementById('notifications-status');
     if (!box) return;
-    const enabled = !!state.profile.pushSubscription;
-    box.innerHTML = enabled
-      ? `<p class="ok" style="margin-bottom:8px;">Notifications are on.</p><button class="ghost" onclick="window.disableNotifications(this)">Turn off</button>`
-      : `<button class="primary" onclick="window.enableNotifications(this)">Enable notifications</button><div id="notifications-error"></div>`;
+    box.innerHTML = '<p>Checking…</p>';
+
+    let enabledOnThisDevice = false;
+    if ('serviceWorker' in navigator) {
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        const sub = await registration.pushManager.getSubscription();
+        enabledOnThisDevice = !!sub;
+      } catch (err) { /* treat as not enabled */ }
+    }
+    let deviceCount = 0;
+    try {
+      const subsSnap = await getDocs(collection(db, 'users', state.user.uid, 'pushSubscriptions'));
+      deviceCount = subsSnap.size;
+    } catch (err) { /* best effort */ }
+
+    if (!box) return; // tab may have changed while awaiting
+    const countNote = deviceCount > 0 ? ` (${deviceCount} device${deviceCount === 1 ? '' : 's'} enabled total)` : '';
+    box.innerHTML = enabledOnThisDevice
+      ? `<p class="ok" style="margin-bottom:8px;">Notifications are on for this device.${countNote}</p><button class="ghost" onclick="window.disableNotifications(this)">Turn off for this device</button>`
+      : `<button class="primary" onclick="window.enableNotifications(this)">Enable notifications on this device</button><div id="notifications-error"></div>${countNote ? `<p style="margin-top:6px; font-size:12px; color:var(--ink-soft);">${countNote.trim()}</p>` : ''}`;
   }
 
   window.enableNotifications = async function (btn) {
@@ -837,8 +878,9 @@ function renderSettingsTab() {
       await subscribeToPush();
       renderNotificationsStatus();
     } catch (err) {
-      document.getElementById('notifications-error').innerHTML = `<p class="error">${err.message}</p>`;
-      btn.disabled = false; btn.textContent = 'Enable notifications';
+      const errBox = document.getElementById('notifications-error');
+      if (errBox) errBox.innerHTML = `<p class="error">${err.message}</p>`;
+      btn.disabled = false; btn.textContent = 'Enable notifications on this device';
     }
   };
 
