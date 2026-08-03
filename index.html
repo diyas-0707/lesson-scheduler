@@ -1146,10 +1146,16 @@ function renderTeacherCalendarTab() {
             const firstName = (s.name || '').split(' ')[0];
             const durationMin = (s.recurringSlot && s.recurringSlot.durationMinutes) || 30;
             const endTime = minutesToTime(timeToMinutes(p.proposedStartTime) + durationMin);
+            const activeForThisStudent = (studentProposalsMap[s.id] || []).find((pr) => pr.status === 'active');
+            const suffix = activeForThisStudent ? ' (reschedule in progress)' : '';
             const label = verbose
-              ? `Lesson with ${s.name} (rescheduled), ${formatTime12(p.proposedStartTime)}–${formatTime12(endTime)}`
+              ? `Lesson with ${s.name} (rescheduled), ${formatTime12(p.proposedStartTime)}–${formatTime12(endTime)}${suffix}`
               : `${formatTimeCompact(p.proposedStartTime)} ${firstName} (moved)`;
-            blocks.push({ type: 'lesson', color: colorForStudent(s.id), label });
+            blocks.push({
+              type: 'lesson', color: colorForStudent(s.id), label,
+              studentId: s.id, date: iso, startTime: p.proposedStartTime,
+              activeProposal: activeForThisStudent || null
+            });
           });
       });
       unavailableBlocks.filter((b) => b.date === iso).forEach((b) => {
@@ -1316,10 +1322,15 @@ function renderStudentCalendarTab() {
       myProposals.filter((p) => p.status === 'confirmed' && p.proposedDate === iso).forEach((p) => {
         const durationMin = (myStudentDoc.recurringSlot && myStudentDoc.recurringSlot.durationMinutes) || 30;
         const endTime = minutesToTime(timeToMinutes(p.proposedStartTime) + durationMin);
+        const suffix = active ? ' (reschedule in progress)' : '';
         const label = verbose
-          ? `Your lesson (rescheduled), ${formatTime12(p.proposedStartTime)}–${formatTime12(endTime)}`
+          ? `Your lesson (rescheduled), ${formatTime12(p.proposedStartTime)}–${formatTime12(endTime)}${suffix}`
           : `${formatTimeCompact(p.proposedStartTime)} Lesson (moved)`;
-        blocks.push({ type: 'lesson', color: '#8C6D3F', label });
+        blocks.push({
+          type: 'lesson', color: '#8C6D3F', label,
+          date: iso, startTime: p.proposedStartTime,
+          activeProposal: active || null
+        });
       });
 
       if (reschedulingOrigin) {
