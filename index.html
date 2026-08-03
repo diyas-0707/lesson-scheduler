@@ -182,6 +182,15 @@
   .calendar-view-toggle button { border-radius: 0; padding: 7px 12px; font-size: 12px; background: var(--paper-raised); color: var(--ink-soft); }
   .calendar-view-toggle button.active { background: var(--brass-deep); color: #FFF9EF; }
   .calendar-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink-soft); margin-bottom: 14px; }
+  .reschedule-banner {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: var(--brass-deep); color: #FFF9EF; border-radius: 10px; padding: 10px 14px;
+    font-size: 13px; font-weight: 600; margin-bottom: 14px;
+  }
+  .reschedule-banner button { padding: 6px 12px; font-size: 12px; background: rgba(255,255,255,0.18); color: #FFF9EF; border: 1px solid rgba(255,255,255,0.4); }
+  .reschedule-banner button:hover { background: rgba(255,255,255,0.28); }
+  .calendar-block.free[data-date] { cursor: pointer; }
+  .calendar-block.free[data-date]:hover { background: var(--sage); color: #fff; }
   .calendar-legend span { display: inline-flex; align-items: center; gap: 5px; }
   .legend-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 
@@ -587,11 +596,11 @@ function hasActiveProposal(proposalsForStudent) {
   return (proposalsForStudent || []).some((p) => p.status === 'active');
 }
 
-async function createRescheduleProposal(teacherId, studentId, originalDate, originalStartTime, requestedBy) {
+async function createRescheduleProposal(teacherId, studentId, originalDate, originalStartTime, requestedBy, proposedDate, proposedStartTime) {
   await addDoc(collection(db, 'users', teacherId, 'students', studentId, 'rescheduleProposals'), {
     requestedBy, originalDate, originalStartTime,
-    status: 'active', mode: 'pick', turnOwner: otherParty(requestedBy),
-    proposedDate: null, proposedStartTime: null, proposedBy: null,
+    status: 'active', mode: 'confirm', turnOwner: otherParty(requestedBy),
+    proposedDate, proposedStartTime, proposedBy: requestedBy,
     createdAt: serverTimestamp()
   });
 }
@@ -960,7 +969,8 @@ function weekGridHtml(getBlocksForDate, onDayClick) {
         <div class="calendar-day-blocks">
           ${blocks.map((b) => {
             const typeClass = b.type === 'unavailable' ? 'unavailable' : (b.type === 'free' ? 'free' : (b.type === 'student-unavailable' ? 'student-unavailable' : ''));
-            return `<div class="calendar-block ${typeClass} ${b.conflict ? 'conflict' : ''}" style="${b.type === 'lesson' ? `background:${b.color};` : ''}">${b.label}</div>`;
+            const dataAttrs = b.clickable ? ` data-date="${b.date}" data-starttime="${b.startTime}"` : '';
+            return `<div class="calendar-block ${typeClass} ${b.conflict ? 'conflict' : ''}" style="${b.type === 'lesson' ? `background:${b.color};` : ''}"${dataAttrs}>${b.label}</div>`;
           }).join('')}
         </div>
       </div>`;
@@ -1013,6 +1023,7 @@ function renderTeacherCalendarTab() {
   let studentProposalsMap = {};
   let studentProposalListeners = {};
   let expandedDate = null;
+  let reschedulingOrigin = null; // { studentId, date, startTime } while picking a new time
 
   function subscribeStudentExtras(studentId) {
     if (!studentUnavailListeners[studentId]) {
@@ -1039,9 +1050,22 @@ function renderTeacherCalendarTab() {
 
   window.openDayDetail = function (iso) { expandedDate = iso; draw(); };
   window.closeDayDetail = function () { expandedDate = null; draw(); };
-  window.sendRescheduleProposal = async function (studentId, originalDate, originalStartTime) {
+
+  window.startRescheduleSelection = function (studentId, originalDate, originalStartTime) {
     if (hasActiveProposal(studentProposalsMap[studentId])) return; // already one in flight
-    await createRescheduleProposal(teacherId, studentId, originalDate, originalStartTime, 'teacher');
+    reschedulingOrigin = { studentId, date: originalDate, startTime: originalStartTime };
+    expandedDate = null;
+    draw();
+  };
+  window.cancelRescheduleSelection = function () {
+    reschedulingOrigin = null;
+    draw();
+  };
+  window.finalizeRescheduleSelection = async function (newDate, newStartTime) {
+    if (!reschedulingOrigin) return;
+    const { studentId, date, startTime } = reschedulingOrigin;
+    reschedulingOrigin = null;
+    await createRescheduleProposal(teacherId, studentId, date, startTime, 'teacher', newDate, newStartTime);
     draw();
   };
 
@@ -1049,6 +1073,11 @@ function renderTeacherCalendarTab() {
     const box = document.getElementById('calendar-content');
     if (!box) return;
     const ws = state.profile.weeklySchedule || { activeDays: [] };
+
+    function isTakenByAnyone(dayOfWeek, startTime, excludeStudentId) {
+      return students.some((s) => s.id !== excludeStudentId && s.recurringSlot &&
+        s.recurringSlot.dayOfWeek === dayOfWeek && s.recurringSlot.startTime === startTime);
+    }
 
     function blocksForDate(d, verbose) {
       const dow = d.getDay();
@@ -1090,6 +1119,23 @@ function renderTeacherCalendarTab() {
             blocks.push({ type: 'student-unavailable', label });
           });
         });
+
+        // While actively rescheduling, show open slots as clickable targets.
+        if (reschedulingOrigin) {
+          const slotLen = ws.slotLengthMinutes || 30;
+          generateCandidateSlots(ws).filter((s) => s.dayOfWeek === dow).forEach((s) => {
+            const taken = isTakenByAnyone(s.dayOfWeek, s.startTime, reschedulingOrigin.studentId);
+            const blockedOut = unavailableBlocks.some((b) => b.date === iso &&
+              rangesOverlap(timeToMinutes(s.startTime), timeToMinutes(s.startTime) + slotLen, timeToMinutes(b.startTime), timeToMinutes(b.endTime)));
+            if (!taken && !blockedOut) {
+              blocks.push({
+                type: 'free', date: iso, startTime: s.startTime,
+                label: verbose ? `Open — ${formatTime12(s.startTime)}` : formatTimeCompact(s.startTime),
+                clickable: true
+              });
+            }
+          });
+        }
       }
       // Lessons that moved TO this date via a confirmed negotiation (may not
       // be this student's normal weekday at all — it's a one-off makeup).
@@ -1141,13 +1187,19 @@ function renderTeacherCalendarTab() {
               ${b.type === 'lesson' && b.conflict
                 ? (b.activeProposal
                     ? `<p style="margin:6px 0 0; font-size:12px; color:var(--ink-soft);">${b.activeProposal.turnOwner === 'teacher' ? "It's your turn — respond on the Schedule tab." : 'Waiting on the student — reschedule in progress.'}</p>`
-                    : `<button class="ghost" style="margin-top:6px; padding:6px 10px; font-size:12px;" onclick="window.sendRescheduleProposal('${b.studentId}', '${b.date}', '${b.startTime}')">Propose reschedule</button>`)
+                    : `<button class="ghost" style="margin-top:6px; padding:6px 10px; font-size:12px;" onclick="window.startRescheduleSelection('${b.studentId}', '${b.date}', '${b.startTime}')">Reschedule</button>`)
                 : ''}
             </div>`).join('')}
         </div>`;
     }
 
-    box.innerHTML = calendarToolbarHtml() + `
+    const banner = reschedulingOrigin ? `
+      <div class="reschedule-banner">
+        <span>Pick a new time for this lesson — tap any open slot below.</span>
+        <button class="ghost" onclick="window.cancelRescheduleSelection()">Cancel</button>
+      </div>` : '';
+
+    box.innerHTML = calendarToolbarHtml() + banner + `
       <div class="calendar-legend">
         <span><span class="legend-dot" style="background:${STUDENT_COLORS[0]};"></span>Lesson (per student)</span>
         <span><span class="legend-dot" style="background:#C48E93;"></span>Student unavailable</span>
@@ -1155,9 +1207,16 @@ function renderTeacherCalendarTab() {
         <span><span class="legend-dot" style="background:transparent; border:2px solid #A94438;"></span>⚠ Conflict</span>
       </div>
       ${state.calendarView === 'week'
-        ? weekGridHtml((d) => blocksForDate(d, false), (d) => `window.openDayDetail('${isoDate(d)}')`)
+        ? weekGridHtml((d) => blocksForDate(d, false), reschedulingOrigin ? null : (d) => `window.openDayDetail('${isoDate(d)}')`)
         : monthGridHtml(dotsForDate)}
       ${expandedDate ? dayDetailHtml(expandedDate) : ''}`;
+
+    if (reschedulingOrigin) {
+      box.querySelectorAll('.calendar-block.free[data-date]').forEach((elm) => {
+        elm.style.cursor = 'pointer';
+        elm.onclick = () => window.finalizeRescheduleSelection(elm.dataset.date, elm.dataset.starttime);
+      });
+    }
   }
 
   const unsubStudents = onSnapshot(collection(db, 'users', teacherId, 'students'), (snap) => {
@@ -1199,6 +1258,7 @@ function renderStudentCalendarTab() {
   let myProposals = [];
   let myUnavailableDates = [];
   let expandedDate = null;
+  let reschedulingOrigin = null; // { date, startTime } while picking a new time
 
   function isTakenByAnyone(dayOfWeek, startTime) {
     return allStudents.some((s) => s.recurringSlot && s.recurringSlot.dayOfWeek === dayOfWeek && s.recurringSlot.startTime === startTime);
@@ -1206,9 +1266,21 @@ function renderStudentCalendarTab() {
 
   window.openDayDetail = function (iso) { expandedDate = iso; draw(); };
   window.closeDayDetail = function () { expandedDate = null; draw(); };
-  window.requestRescheduleFromStudent = async function (originalDate, originalStartTime) {
+  window.startRescheduleSelection = function (originalDate, originalStartTime) {
     if (hasActiveProposal(myProposals)) return; // already one in flight
-    await createRescheduleProposal(teacherId, uid, originalDate, originalStartTime, 'student');
+    reschedulingOrigin = { date: originalDate, startTime: originalStartTime };
+    expandedDate = null;
+    draw();
+  };
+  window.cancelRescheduleSelection = function () {
+    reschedulingOrigin = null;
+    draw();
+  };
+  window.finalizeRescheduleSelection = async function (newDate, newStartTime) {
+    if (!reschedulingOrigin) return;
+    const { date, startTime } = reschedulingOrigin;
+    reschedulingOrigin = null;
+    await createRescheduleProposal(teacherId, uid, date, startTime, 'student', newDate, newStartTime);
     draw();
   };
 
@@ -1249,16 +1321,36 @@ function renderStudentCalendarTab() {
           : `${formatTimeCompact(p.proposedStartTime)} Lesson (moved)`;
         blocks.push({ type: 'lesson', color: '#8C6D3F', label });
       });
-      const freeSlots = candidates
-        .filter((s) => s.dayOfWeek === dow && !isTakenByAnyone(s.dayOfWeek, s.startTime))
-        .sort((a, b) => a.startTime.localeCompare(b.startTime));
-      const slotLen = (weeklySchedule && weeklySchedule.slotLengthMinutes) || 30;
-      mergeFreeRanges(freeSlots, slotLen).forEach((r) => {
-        const label = verbose
-          ? `Teacher free, ${formatTime12(r.startTime)}–${formatTime12(r.endTime)}`
-          : `${formatTimeCompact(r.startTime)}–${formatTimeCompact(r.endTime)}`;
-        blocks.push({ type: 'free', label });
-      });
+
+      if (reschedulingOrigin) {
+        // Actively picking — show each open slot individually and clickable.
+        const slotLen = (weeklySchedule && weeklySchedule.slotLengthMinutes) || 30;
+        candidates.filter((s) => s.dayOfWeek === dow).forEach((s) => {
+          const taken = isTakenByAnyone(s.dayOfWeek, s.startTime);
+          const teacherBlocked = unavailableBlocks.some((b) => b.date === iso &&
+            rangesOverlap(timeToMinutes(s.startTime), timeToMinutes(s.startTime) + slotLen, timeToMinutes(b.startTime), timeToMinutes(b.endTime)));
+          const myBlocked = myUnavailableDates.some((u) => u.date === iso &&
+            rangesOverlap(timeToMinutes(s.startTime), timeToMinutes(s.startTime) + slotLen, timeToMinutes(u.startTime), timeToMinutes(u.endTime)));
+          if (!taken && !teacherBlocked && !myBlocked) {
+            blocks.push({
+              type: 'free', date: iso, startTime: s.startTime,
+              label: verbose ? `Open — ${formatTime12(s.startTime)}` : formatTimeCompact(s.startTime),
+              clickable: true
+            });
+          }
+        });
+      } else {
+        const freeSlots = candidates
+          .filter((s) => s.dayOfWeek === dow && !isTakenByAnyone(s.dayOfWeek, s.startTime))
+          .sort((a, b) => a.startTime.localeCompare(b.startTime));
+        const slotLen = (weeklySchedule && weeklySchedule.slotLengthMinutes) || 30;
+        mergeFreeRanges(freeSlots, slotLen).forEach((r) => {
+          const label = verbose
+            ? `Teacher free, ${formatTime12(r.startTime)}–${formatTime12(r.endTime)}`
+            : `${formatTimeCompact(r.startTime)}–${formatTimeCompact(r.endTime)}`;
+          blocks.push({ type: 'free', label });
+        });
+      }
       unavailableBlocks.filter((b) => b.date === iso).forEach((b) => {
         const label = verbose
           ? `Teacher unavailable, ${formatTime12(b.startTime)}–${formatTime12(b.endTime)}`
@@ -1291,22 +1383,35 @@ function renderStudentCalendarTab() {
               ${b.type === 'lesson' && b.conflict
                 ? (b.activeProposal
                     ? `<p style="margin:6px 0 0; font-size:12px; color:var(--ink-soft);">${b.activeProposal.turnOwner === 'student' ? "It's your turn — respond on the Schedule tab." : 'Waiting on your teacher — reschedule in progress.'}</p>`
-                    : `<button class="ghost" style="margin-top:6px; padding:6px 10px; font-size:12px;" onclick="window.requestRescheduleFromStudent('${b.date}', '${b.startTime}')">Request reschedule</button>`)
+                    : `<button class="ghost" style="margin-top:6px; padding:6px 10px; font-size:12px;" onclick="window.startRescheduleSelection('${b.date}', '${b.startTime}')">Reschedule</button>`)
                 : ''}
             </div>`).join('')}
         </div>`;
     }
 
-    box.innerHTML = calendarToolbarHtml() + `
+    const banner = reschedulingOrigin ? `
+      <div class="reschedule-banner">
+        <span>Pick a new time for your lesson — tap any open slot below.</span>
+        <button class="ghost" onclick="window.cancelRescheduleSelection()">Cancel</button>
+      </div>` : '';
+
+    box.innerHTML = calendarToolbarHtml() + banner + `
       <div class="calendar-legend">
         <span><span class="legend-dot" style="background:#8C6D3F;"></span>My lesson</span>
         <span><span class="legend-dot" style="background:transparent; border:1px dashed var(--sage);"></span>Teacher free</span>
         <span><span class="legend-dot" style="background:#9aa0a8;"></span>Teacher unavailable</span>
       </div>
       ${state.calendarView === 'week'
-        ? weekGridHtml((d) => blocksForDate(d, false), (d) => `window.openDayDetail('${isoDate(d)}')`)
+        ? weekGridHtml((d) => blocksForDate(d, false), reschedulingOrigin ? null : (d) => `window.openDayDetail('${isoDate(d)}')`)
         : monthGridHtml(dotsForDate)}
       ${expandedDate ? dayDetailHtml(expandedDate) : ''}`;
+
+    if (reschedulingOrigin) {
+      box.querySelectorAll('.calendar-block.free[data-date]').forEach((elm) => {
+        elm.style.cursor = 'pointer';
+        elm.onclick = () => window.finalizeRescheduleSelection(elm.dataset.date, elm.dataset.starttime);
+      });
+    }
   }
 
   const unsubMyDoc = onSnapshot(doc(db, 'users', teacherId, 'students', uid), (snap) => {
