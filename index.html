@@ -173,6 +173,15 @@
   .theme-dropdown-item:hover { background: var(--rule-light); }
   .theme-dropdown-item.active { background: var(--rule-light); font-weight: 700; }
 
+  .toggle-switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider { position: absolute; cursor: pointer; inset: 0; background: var(--rule); border-radius: 22px; transition: 0.2s; }
+  .toggle-slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: 0.2s; }
+  .toggle-switch input:checked + .toggle-slider { background: var(--brass-deep); }
+  .toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
+  .notif-pref-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--rule-light); font-size: 14px; }
+  .notif-pref-row:last-child { border-bottom: none; }
+
   .calendar-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
   .calendar-nav { display: flex; align-items: center; gap: 6px; }
   .calendar-nav-btn { width: 32px; height: 32px; padding: 0; border-radius: 8px; background: var(--paper-raised); color: var(--ink); border: 1px solid var(--rule); font-size: 14px; }
@@ -518,7 +527,7 @@ async function requestConnectionByEmail(fromRole, toEmail) {
     // Best-effort: if this email already has an account, try to notify them.
     const existing = await getDocs(query(collection(db, 'users'), where('email', '==', email)));
     if (!existing.empty) {
-      sendPushNotification(existing.docs[0].id, 'New connection request', `${state.profile.name} wants to add you as a student.`);
+      sendPushNotification(existing.docs[0].id, 'New connection request', `${state.profile.name} wants to add you as a student.`, 'connectionRequest');
     }
     return;
   }
@@ -536,7 +545,7 @@ async function requestConnectionByEmail(fromRole, toEmail) {
     teacherId: toUid, teacherName: toData.name, teacherEmail: toData.email,
     initiatedBy: 'student', status: 'pending', createdAt: serverTimestamp()
   });
-  sendPushNotification(toUid, 'New connection request', `${state.profile.name} wants to connect as a student.`);
+  sendPushNotification(toUid, 'New connection request', `${state.profile.name} wants to connect as a student.`, 'connectionRequest');
 }
 
 async function acceptConnectionRequest(requestId, request) {
@@ -614,7 +623,7 @@ async function createRescheduleProposal(teacherId, studentId, originalDate, orig
     createdAt: serverTimestamp()
   });
   const targetUserId = requestedBy === 'teacher' ? studentId : teacherId;
-  sendPushNotification(targetUserId, 'Reschedule requested', `A new time was proposed: ${proposedDate} at ${formatTime12(proposedStartTime)}. Tap to respond.`);
+  sendPushNotification(targetUserId, 'Reschedule requested', `A new time was proposed: ${proposedDate} at ${formatTime12(proposedStartTime)}. Tap to respond.`, 'rescheduleNeedsResponse');
 }
 
 async function submitProposedTime(teacherId, studentId, proposalId, actingParty, date, time) {
@@ -623,7 +632,7 @@ async function submitProposedTime(teacherId, studentId, proposalId, actingParty,
     mode: 'confirm', turnOwner: otherParty(actingParty)
   });
   const targetUserId = actingParty === 'teacher' ? studentId : teacherId;
-  sendPushNotification(targetUserId, 'Reschedule requested', `A new time was proposed: ${date} at ${formatTime12(time)}. Tap to respond.`);
+  sendPushNotification(targetUserId, 'Reschedule requested', `A new time was proposed: ${date} at ${formatTime12(time)}. Tap to respond.`, 'rescheduleNeedsResponse');
 }
 
 async function confirmProposedTime(teacherId, studentId, proposalId, accept, confirmingParty) {
@@ -632,7 +641,7 @@ async function confirmProposedTime(teacherId, studentId, proposalId, accept, con
       status: 'confirmed', mode: null
     });
     const targetUserId = confirmingParty === 'teacher' ? studentId : teacherId;
-    sendPushNotification(targetUserId, 'Reschedule confirmed', 'Your reschedule request was confirmed.');
+    sendPushNotification(targetUserId, 'Reschedule confirmed', 'Your reschedule request was confirmed.', 'rescheduleConfirmed');
   } else {
     // Declining party now picks their own alternative — turnOwner stays on
     // them, just switches from confirming to picking.
@@ -765,13 +774,23 @@ async function unsubscribeFromPush() {
   }
 }
 
+const NOTIF_TYPES = [
+  { key: 'connectionRequest', label: 'New connection requests' },
+  { key: 'rescheduleNeedsResponse', label: 'Reschedule needs your response' },
+  { key: 'rescheduleConfirmed', label: 'Reschedule confirmed' }
+];
+
 /** Best-effort: sends to every device the target user has enabled
- *  notifications on, and quietly cleans up any subscription the browser
+ *  notifications on (skipping it entirely if they've turned this specific
+ *  notifType off), and quietly cleans up any subscription the browser
  *  reports as expired/revoked. Never blocks or throws into the caller's
  *  main action if any of this fails. */
-async function sendPushNotification(targetUserId, title, body) {
+async function sendPushNotification(targetUserId, title, body, notifType) {
   try {
     if (!targetUserId) return;
+    const userSnap = await getDoc(doc(db, 'users', targetUserId));
+    const prefs = (userSnap.exists() && userSnap.data().notifPrefs) || {};
+    if (notifType && prefs[notifType] === false) return; // they turned this type off
     const subsSnap = await getDocs(collection(db, 'users', targetUserId, 'pushSubscriptions'));
     if (subsSnap.empty) return;
     await Promise.all(subsSnap.docs.map(async (d) => {
@@ -838,6 +857,11 @@ function renderSettingsTab() {
       </section>
 
       <section>
+        <h2>Notify me about</h2>
+        <div id="notif-prefs-section"></div>
+      </section>
+
+      <section>
         <h2>Account</h2>
         <button class="ghost" onclick="window.logout()">Sign out</button>
       </section>
@@ -891,6 +915,31 @@ function renderSettingsTab() {
   };
 
   renderNotificationsStatus();
+
+  function renderNotifPrefs() {
+    const box = document.getElementById('notif-prefs-section');
+    if (!box) return;
+    const prefs = state.profile.notifPrefs || {};
+    box.innerHTML = NOTIF_TYPES.map((t) => {
+      const enabled = prefs[t.key] !== false;
+      return `
+        <div class="notif-pref-row">
+          <span>${t.label}</span>
+          <label class="toggle-switch">
+            <input type="checkbox" ${enabled ? 'checked' : ''} onchange="window.setNotifPref('${t.key}', this.checked)" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>`;
+    }).join('');
+  }
+
+  window.setNotifPref = async function (key, value) {
+    const updated = { ...(state.profile.notifPrefs || {}), [key]: value };
+    state.profile = { ...state.profile, notifPrefs: updated };
+    await updateDoc(doc(db, 'users', state.user.uid), { notifPrefs: updated });
+  };
+
+  renderNotifPrefs();
 
   let themeDropdownOpen = false;
 
