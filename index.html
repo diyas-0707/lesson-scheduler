@@ -856,10 +856,7 @@ function renderSettingsTab() {
         <div id="notifications-status"></div>
       </section>
 
-      <section>
-        <h2>Notify me about</h2>
-        <div id="notif-prefs-section"></div>
-      </section>
+      <div id="notif-prefs-section"></div>
 
       <section>
         <h2>Account</h2>
@@ -894,6 +891,8 @@ function renderSettingsTab() {
     box.innerHTML = enabledOnThisDevice
       ? `<p class="ok" style="margin-bottom:8px;">Notifications are on for this device.${countNote}</p><button class="ghost" onclick="window.disableNotifications(this)">Turn off for this device</button>`
       : `<button class="primary" onclick="window.enableNotifications(this)">Enable notifications on this device</button><div id="notifications-error"></div>${countNote ? `<p style="margin-top:6px; font-size:12px; color:var(--ink-soft);">${countNote.trim()}</p>` : ''}`;
+
+    renderNotifPrefs(enabledOnThisDevice);
   }
 
   window.enableNotifications = async function (btn) {
@@ -914,23 +913,26 @@ function renderSettingsTab() {
     renderNotificationsStatus();
   };
 
-  renderNotificationsStatus();
-
-  function renderNotifPrefs() {
+  function renderNotifPrefs(show) {
     const box = document.getElementById('notif-prefs-section');
     if (!box) return;
+    if (!show) { box.innerHTML = ''; return; }
     const prefs = state.profile.notifPrefs || {};
-    box.innerHTML = NOTIF_TYPES.map((t) => {
-      const enabled = prefs[t.key] !== false;
-      return `
-        <div class="notif-pref-row">
-          <span>${t.label}</span>
-          <label class="toggle-switch">
-            <input type="checkbox" ${enabled ? 'checked' : ''} onchange="window.setNotifPref('${t.key}', this.checked)" />
-            <span class="toggle-slider"></span>
-          </label>
-        </div>`;
-    }).join('');
+    box.innerHTML = `
+      <section>
+        <h2>Notify me about</h2>
+        ${NOTIF_TYPES.map((t) => {
+          const enabled = prefs[t.key] !== false;
+          return `
+            <div class="notif-pref-row">
+              <span>${t.label}</span>
+              <label class="toggle-switch">
+                <input type="checkbox" ${enabled ? 'checked' : ''} onchange="window.setNotifPref('${t.key}', this.checked)" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>`;
+        }).join('')}
+      </section>`;
   }
 
   window.setNotifPref = async function (key, value) {
@@ -939,7 +941,7 @@ function renderSettingsTab() {
     await updateDoc(doc(db, 'users', state.user.uid), { notifPrefs: updated });
   };
 
-  renderNotifPrefs();
+  renderNotificationsStatus();
 
   let themeDropdownOpen = false;
 
