@@ -1258,6 +1258,7 @@ function renderTeacherCalendarTab() {
   };
   window.finalizeRescheduleSelection = async function (newDate, newStartTime) {
     if (!reschedulingOrigin) return;
+    if (!confirm(`Send a reschedule request for ${newDate} at ${formatTime12(newStartTime)}?`)) return;
     const { studentId, date, startTime } = reschedulingOrigin;
     reschedulingOrigin = null;
     await createRescheduleProposal(teacherId, studentId, date, startTime, 'teacher', newDate, newStartTime);
@@ -1335,8 +1336,10 @@ function renderTeacherCalendarTab() {
       // Lessons that moved TO this date via a confirmed negotiation (may not
       // be this student's normal weekday at all — it's a one-off makeup).
       students.forEach((s) => {
-        (studentProposalsMap[s.id] || [])
-          .filter((p) => p.status === 'confirmed' && p.proposedDate === iso)
+        const confirmedForStudent = (studentProposalsMap[s.id] || []).filter((p) => p.status === 'confirmed');
+        confirmedForStudent
+          .filter((p) => p.proposedDate === iso)
+          .filter((p) => !confirmedForStudent.some((later) => later.originalDate === p.proposedDate)) // skip if moved again after landing here
           .forEach((p) => {
             const firstName = (s.name || '').split(' ')[0];
             const durationMin = (s.recurringSlot && s.recurringSlot.durationMinutes) || 30;
@@ -1479,6 +1482,7 @@ function renderStudentCalendarTab() {
   };
   window.finalizeRescheduleSelection = async function (newDate, newStartTime) {
     if (!reschedulingOrigin) return;
+    if (!confirm(`Send a reschedule request for ${newDate} at ${formatTime12(newStartTime)}?`)) return;
     const { date, startTime } = reschedulingOrigin;
     reschedulingOrigin = null;
     await createRescheduleProposal(teacherId, uid, date, startTime, 'student', newDate, newStartTime);
@@ -1514,19 +1518,23 @@ function renderStudentCalendarTab() {
           activeProposal: active || null
         });
       }
-      myProposals.filter((p) => p.status === 'confirmed' && p.proposedDate === iso).forEach((p) => {
-        const durationMin = (myStudentDoc.recurringSlot && myStudentDoc.recurringSlot.durationMinutes) || 30;
-        const endTime = minutesToTime(timeToMinutes(p.proposedStartTime) + durationMin);
-        const suffix = active ? ' (reschedule in progress)' : '';
-        const label = verbose
-          ? `Your lesson (rescheduled), ${formatTime12(p.proposedStartTime)}–${formatTime12(endTime)}${suffix}`
-          : `${formatTimeCompact(p.proposedStartTime)} Lesson (moved)`;
-        blocks.push({
-          type: 'lesson', color: '#8C6D3F', label,
-          date: iso, startTime: p.proposedStartTime,
-          activeProposal: active || null
+      const confirmedProposals = myProposals.filter((p) => p.status === 'confirmed');
+      confirmedProposals
+        .filter((p) => p.proposedDate === iso)
+        .filter((p) => !confirmedProposals.some((later) => later.originalDate === p.proposedDate)) // skip if moved again after landing here
+        .forEach((p) => {
+          const durationMin = (myStudentDoc.recurringSlot && myStudentDoc.recurringSlot.durationMinutes) || 30;
+          const endTime = minutesToTime(timeToMinutes(p.proposedStartTime) + durationMin);
+          const suffix = active ? ' (reschedule in progress)' : '';
+          const label = verbose
+            ? `Your lesson (rescheduled), ${formatTime12(p.proposedStartTime)}–${formatTime12(endTime)}${suffix}`
+            : `${formatTimeCompact(p.proposedStartTime)} Lesson (moved)`;
+          blocks.push({
+            type: 'lesson', color: '#8C6D3F', label,
+            date: iso, startTime: p.proposedStartTime,
+            activeProposal: active || null
+          });
         });
-      });
 
       if (reschedulingOrigin) {
         // Actively picking — show each open slot individually and clickable.
@@ -1942,6 +1950,7 @@ function renderTeacherHomeTab() {
   };
 
   window.teacherSubmitProposedTime = async function (studentId, proposalId, date, time) {
+    if (!confirm(`Offer ${date} at ${formatTime12(time)} instead?`)) return;
     await submitProposedTime(teacherId, studentId, proposalId, 'teacher', date, time);
   };
 
@@ -2197,6 +2206,7 @@ function renderStudentHomeTab() {
   };
 
   window.studentSubmitProposedTime = async function (proposalId, date, time) {
+    if (!confirm(`Offer ${date} at ${formatTime12(time)} instead?`)) return;
     await submitProposedTime(teacherId, uid, proposalId, 'student', date, time);
   };
 
